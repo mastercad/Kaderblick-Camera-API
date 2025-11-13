@@ -1,0 +1,21 @@
+[Unit]
+Description=Kaderblick Camera API
+After=network.target
+Requires=network.target
+
+[Service]
+Type=simple
+User=kaderblick
+Group=kaderblick
+WorkingDirectory=/home/kaderblick/camera_api
+Environment=VIRTUAL_ENV=/home/kaderblick/camera_api/venv
+Environment=PATH=/home/kaderblick/camera_api/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+# Start Uvicorn from the venv so the service finds your installed packages
+ExecStart=/home/kaderblick/camera_api/venv/bin/uvicorn fastapi_app:app --host 0.0.0.0 --port 8000 --workers 1
+Restart=on-failure
+RestartSec=5
+SyslogIdentifier=kaderblick_app
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

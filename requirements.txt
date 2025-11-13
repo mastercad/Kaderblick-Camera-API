@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+pyzmq
+opencv-python
+pyaudio
+ffmpeg-python
