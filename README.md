@@ -210,6 +210,32 @@ Kaderblick-Camera-API/
 
 ## Configuration
 
+### Environment Variables
+
+The application can be configured using environment variables:
+
+- `FLASK_DEBUG` - Enable debug mode (default: `False`)
+  ```bash
+  export FLASK_DEBUG=True
+  ```
+
+- `FLASK_HOST` - Host to bind to (default: `0.0.0.0`)
+  ```bash
+  export FLASK_HOST=127.0.0.1
+  ```
+
+- `FLASK_PORT` - Port to listen on (default: `5000`)
+  ```bash
+  export FLASK_PORT=8080
+  ```
+
+- `ALLOWED_ORIGINS` - Comma-separated list of allowed CORS origins (default: `http://localhost:5000,http://127.0.0.1:5000`)
+  ```bash
+  export ALLOWED_ORIGINS=http://localhost:5000,http://example.com
+  ```
+
+### Camera Settings
+
 The default camera settings can be modified in `camera_controller.py`:
 
 ```python
@@ -259,8 +285,17 @@ python app.py
 For production deployment, use a WSGI server like Gunicorn:
 ```bash
 pip install gunicorn
+export FLASK_DEBUG=False
+export ALLOWED_ORIGINS=https://your-domain.com
 gunicorn -w 4 -b 0.0.0.0:5000 app:app
 ```
+
+**Security Recommendations for Production:**
+- Set `FLASK_DEBUG=False`
+- Configure `ALLOWED_ORIGINS` to specific domains
+- Use HTTPS with a reverse proxy (nginx, Apache)
+- Run behind a firewall
+- Use authentication middleware if needed
 
 ## License
 

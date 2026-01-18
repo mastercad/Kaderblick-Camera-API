@@ -13,10 +13,9 @@ fi
 
 # Check if requirements are installed
 echo "Checking dependencies..."
-python3 -c "import flask" 2>/dev/null
-if [ $? -ne 0 ]; then
+if ! python3 -c "import flask, cv2, numpy, flask_cors, PIL" 2>/dev/null; then
     echo "Installing dependencies..."
-    pip install -r requirements.txt
+    pip3 install --user -r requirements.txt
 fi
 
 # Create captured_images directory if it doesn't exist

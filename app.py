@@ -14,7 +14,11 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)  # Enable CORS for web interface
+
+# Configure CORS with specific origins for security
+# In production, set ALLOWED_ORIGINS environment variable
+allowed_origins = os.getenv('ALLOWED_ORIGINS', 'http://localhost:5000,http://127.0.0.1:5000').split(',')
+CORS(app, origins=allowed_origins)
 
 # Initialize camera controller
 camera = CameraController(camera_id=0)
@@ -616,5 +620,10 @@ if __name__ == '__main__':
     logger.info("Starting Kaderblick Camera API...")
     camera.connect()
     
+    # Get configuration from environment variables
+    debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
+    host = os.getenv('FLASK_HOST', '0.0.0.0')
+    port = int(os.getenv('FLASK_PORT', '5000'))
+    
     # Run the Flask app
-    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
+    app.run(host=host, port=port, debug=debug_mode, threaded=True)

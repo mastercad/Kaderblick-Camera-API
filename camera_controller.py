@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 class CameraController:
     """Controller for USB camera operations"""
     
+    MAX_CAMERA_INDICES = 10  # Maximum number of camera indices to check
+    
     def __init__(self, camera_id: int = 0):
         """
         Initialize camera controller
@@ -208,7 +210,7 @@ class CameraController:
             list: List of available camera IDs
         """
         available = []
-        for i in range(10):  # Check first 10 camera indices
+        for i in range(self.MAX_CAMERA_INDICES):
             cap = cv2.VideoCapture(i)
             if cap.isOpened():
                 available.append(i)
