@@ -11,6 +11,7 @@ A REST API for controlling USB cameras via web interface. This software provides
 - 🎬 Live Streaming - Real-time camera preview in the browser
 - ⚙️ Camera Settings - Adjust resolution, FPS, and other camera parameters
 - 🔌 Auto-detection - Automatically detect available cameras
+- 🔒 Security - Up-to-date dependencies with no known vulnerabilities
 
 ## Requirements
 
