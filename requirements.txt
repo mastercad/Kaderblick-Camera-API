@@ -3,4 +3,7 @@ uvicorn
 pyzmq
 opencv-python
 pyaudio
-ffmpeg-python
+pydantic
+lgpio
+psutil
+v4l2-python3
