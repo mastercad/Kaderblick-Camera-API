@@ -7,10 +7,11 @@ Requires=network.target
 Type=simple
 User=kaderblick
 Group=kaderblick
-WorkingDirectory=/home/kaderblick/camera_api
+WorkingDirectory=/home/kaderblick/camera_api/src
 Environment=VIRTUAL_ENV=/home/kaderblick/camera_api/venv
 Environment=PATH=/home/kaderblick/camera_api/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
-ExecStart=/home/kaderblick/camera_api/venv/bin/python /home/kaderblick/camera_api/camera_service.py
+Environment=PYTHONPATH=/home/kaderblick/camera_api/src
+ExecStart=/home/kaderblick/camera_api/venv/bin/python /home/kaderblick/camera_api/src/camera_service.py
 Restart=on-failure
 RestartSec=5
 # Optional: avoid core dumps filling disk

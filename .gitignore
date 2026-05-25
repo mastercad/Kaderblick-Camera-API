@@ -1,0 +1,18 @@
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+.lgd-nfy0
+recordings/*
+config/resolution_config.json
+
+# Umgebungsvariablen / Credentials
+.env
+.env.local
+.env.*
+
+# Python Build-Artefakte
+dist/
+build/
+*.egg-info/

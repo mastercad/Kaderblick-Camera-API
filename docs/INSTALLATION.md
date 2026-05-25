@@ -39,6 +39,21 @@ network:
     eth0:
       dhcp4: no
       addresses:
+        - 192.168.178.47/24
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+      routes:
+        - to: 0.0.0.0/0
+          via: 192.168.178.2
+
+
+
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: no
+      addresses:
         - 192.168.178.48/24
       nameservers:
         addresses: [8.8.8.8, 8.8.4.4]

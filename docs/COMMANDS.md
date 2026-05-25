@@ -93,7 +93,7 @@ ffmpeg -i input.mp4 -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -c:a 
 ## encoding über nvidia GPU:
 ffmpeg -i input.mp4 -c:v h264_nvenc -preset fast -rc:v vbr -cq:v 23 -c:a aac -b:a 192k output.mp4
 
-## angeblich optimalstes conmmand (macht aber keinen sinn, 0.7 geschwindigkeit und dategröße fast unverändert (13GB statt 16GB ...)):
+## angeblich optimalstes command (macht aber keinen sinn, 0.7 geschwindigkeit und dategröße fast unverändert (13GB statt 16GB ...)):
 ffmpeg -i input.mp4 -c:v h264_nvenc -preset p4 -rc:v vbr -cq:v 19 -b:v 0 -pix_fmt yuv420p -c:a aac -b:a 192k output_4k60_nvenc.mp4
 
 ## h265
@@ -114,8 +114,98 @@ ffmpeg -i aufnahme_fixed.mp4 -i aufnahme.wav -c:v copy -c:a aac -b:a 192k -short
 # console commands
 v4l2-ctl --device=/dev/video0 --set-fmt-video=width=3840,height=2160,pixelformat=MJPG
 
-# HDR aktivieren
+# HDR aktivieren (setzt nur NV12 (YUV 4:2:0) als format)
 v4l2-ctl -d /dev/video0 --set-fmt-video=width=3840,height=2160,pixelformat=NV12
+
+# neu
+## Videos zusammenführen verlustarm
+```shell
+ffmpeg -f concat -safe 0 -i list.txt \
+-map 0:v:0 -map 0:a? \
+-vsync cfr -r 30 \
+-c:v libx264 -preset slow -crf 18 \
+-profile:v high -level 4.2 \
+-pix_fmt yuv420p \
+-x264-params keyint=60:min-keyint=60:scenecut=0 \
+-c:a aac -b:a 192k \
+-movflags +faststart \
+output_losslessish.mp4
+```
+
+## Videos zusammenführen youtube
+```shell
+ffmpeg -f concat -safe 0 -i list.txt \
+-map 0:v:0 -map 0:a? \
+-vsync cfr -r 30 \
+-c:v libx264 -preset medium -crf 21 \
+-profile:v high -level 4.2 \
+-pix_fmt yuv420p \
+-x264-params keyint=60:min-keyint=60:scenecut=0 \
+-c:a aac -b:a 160k \
+-movflags +faststart \
+youtube_ready.mp4
+```
+
+## 60 FPS statt 30
+```shell
+-r 60
+keyint=120:min-keyint=120
+```
+
+## Check nach dem konvertieren (beide werte sollten identisch sein)
+```shell
+ffprobe -select_streams v \
+-show_entries stream=r_frame_rate,avg_frame_rate \
+-of default=nk=1 output.mp4
+```
+
+## AUDIO
+### Lautstärke erhöhen (ohne clipping und sauber)
+```shell
+ffmpeg -i audio.wav -af "dynaudnorm=f=150:g=15" audio_norm.wav
+```
+
+### fixe Verstärkung (+12dB)
+```shell
+ffmpeg -i audio.wav -af "volume=12dB" audio_loud.wav
+```
+
+### Loudness YouTube-Norm
+```shell
+ffmpeg -i audio.wav -af "loudnorm=I=-14:LRA=11:TP=-1.5" audio_yt.wav
+```
+
+## Zusammenführen
+### Audio und video zusammenführen, Framedrops ausgleichen
+```shell
+ffmpeg \
+  -fflags +genpts \
+  -i video.mjpeg \
+  -i audio_norm.wav \
+  -map 0:v:0 -map 1:a:0 \
+  -vsync cfr \
+  -r 25 \
+  -af "aresample=async=1:first_pts=0" \
+  -c:v libx264 -preset veryslow -crf 18 -pix_fmt yuv420p \
+  -c:a aac -b:a 192k \
+  -movflags +faststart \
+  master.mp4
+```
+
+### Youtube optimierte Version
+```shell
+ffmpeg -i master.mp4 \
+  -c:v libx264 -preset slow -crf 20 -profile:v high -level 4.2 \
+  -pix_fmt yuv420p \
+  -movflags +faststart \
+  -c:a aac -b:a 192k \
+  youtube.mp4
+```
+
+## Workflow:
+- Audio normalisieren
+- Mjpeg+Audio -> master.mp4
+- master.mp4 -> youtube.mp4
 
 v4l2-ctl --device=/dev/video0 --list-formats-ext
 ioctl: VIDIOC_ENUM_FMT
