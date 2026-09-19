@@ -1,0 +1,23 @@
+[Unit]
+Description=Kaderblick Camera API
+After=kaderblick-firstboot.service network.target camera_service.service
+Requires=kaderblick-firstboot.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=kaderblick
+Group=kaderblick
+WorkingDirectory=/opt/kaderblick/camera_api/src
+Environment=VIRTUAL_ENV=/opt/kaderblick/camera_api/venv
+Environment=PATH=/opt/kaderblick/camera_api/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=PYTHONPATH=/opt/kaderblick/camera_api/src
+ExecStart=/opt/kaderblick/camera_api/venv/bin/uvicorn fastapi_app:app --host 0.0.0.0 --port 8000 --workers 1
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+LimitNOFILE=8192
+SyslogIdentifier=kaderblick_app
+
+[Install]
+WantedBy=multi-user.target

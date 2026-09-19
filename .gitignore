@@ -16,3 +16,33 @@ config/resolution_config.json
 dist/
 build/
 *.egg-info/
+node_modules/
+
+# Test-, Coverage- und Werkzeug-Caches
+.coverage
+coverage/
+.cache/
+.npm/
+
+# Lokale IDE-/Betriebssystemdateien
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+*.log
+
+# Setup-Tool: heruntergeladene Images und erzeugte Desktop-Pakete
+/setup-tool/image/
+*.AppImage
+*.deb
+*.dmg
+*.exe
+
+# Raspberry-Pi-Image-Build: große lokale Arbeits- und Exportartefakte
+/image-builder/pi-gen/
+/image-builder/work/
+/image-builder/deploy/
+/deploy/
+*.img
+*.img.xz
+*.img.xz.sha256

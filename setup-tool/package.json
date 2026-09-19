@@ -1,0 +1,85 @@
+{
+  "name": "kaderblick-camera-setup",
+  "version": "0.1.0",
+  "description": "Schreibt und konfiguriert einen einsatzfertigen Kaderblick-Kamera-Datenträger.",
+  "main": "src/main.js",
+  "author": "Kaderblick",
+  "homepage": "https://github.com/mastercad/Kaderblick-Camera-API",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "lint": "eslint src test",
+    "dist": "electron-builder --publish never",
+    "dist:publish": "electron-builder --publish always"
+  },
+  "dependencies": {
+    "balena-image-fs": "7.0.2",
+    "drivelist": "12.0.2",
+    "etcher-sdk": "10.2.15"
+  },
+  "overrides": {
+    "follow-redirects": "1.16.0",
+    "usb": "3.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.35.0",
+    "electron": "39.8.10",
+    "electron-builder": "26.0.12",
+    "eslint": "9.35.0",
+    "globals": "16.4.0"
+  },
+  "build": {
+    "appId": "de.kaderblick.camera-setup",
+    "productName": "Kaderblick Kamera Setup",
+    "icon": "../assets/kaderblick_camera_api_appicon.png",
+    "asar": true,
+    "npmRebuild": true,
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../assets/kaderblick_camera_api_appicon.png",
+        "to": "assets/kaderblick_camera_api_appicon.png"
+      }
+    ],
+    "artifactName": "Kaderblick-Kamera-Setup-${version}-${os}-${arch}.${ext}",
+    "win": {
+      "icon": "../assets/kaderblick_camera_api_appicon.png",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "artifactName": "Kaderblick-Kamera-Setup-${version}-windows-${arch}-installer.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "portable": {
+      "artifactName": "Kaderblick-Kamera-Setup-${version}-windows-${arch}-portable.${ext}"
+    },
+    "linux": {
+      "icon": "../assets/kaderblick_camera_api_appicon.png",
+      "maintainer": "Kaderblick",
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
+      "category": "Utility"
+    },
+    "mac": {
+      "icon": "../assets/kaderblick_camera_api_appicon.png",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "category": "public.app-category.utilities"
+    }
+  }
+}

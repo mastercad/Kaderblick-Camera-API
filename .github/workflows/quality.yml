@@ -1,0 +1,38 @@
+name: Qualität
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install fastapi==0.136.3 uvicorn==0.47.0 pyzmq==27.1.0 pydantic==2.13.4 psutil==7.2.2 pytest==9.0.3 httpx==0.28.1
+      - run: pytest -q tests/test_*.py
+
+  setup-tool:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: setup-tool
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: setup-tool/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm audit --omit=dev --audit-level=high

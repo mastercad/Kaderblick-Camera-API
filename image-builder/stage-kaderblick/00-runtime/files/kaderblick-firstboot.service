@@ -1,0 +1,15 @@
+[Unit]
+Description=Kaderblick Offline-Ersteinrichtung
+ConditionPathExists=/boot/firmware/kaderblick-config.json
+Before=systemd-networkd.service camera_service.service kaderblick_app.service smbd.service ssh.service
+Wants=systemd-networkd.service
+After=kaderblick-expand-root.service
+Requires=kaderblick-expand-root.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/kaderblick-firstboot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

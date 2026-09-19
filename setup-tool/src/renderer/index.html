@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Kaderblick Kamera Setup</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="brand-mark"><img id="app-icon" alt="Kaderblick Camera API"></div>
+        <div class="brand-copy">
+          <p class="eyebrow">KADERBLICK · CAMERA API</p>
+          <h1>Kamera-Datenträger vorbereiten</h1>
+          <p>Das vollständige Offline-System für den Raspberry Pi 5.</p>
+        </div>
+      </header>
+
+      <form id="setup-form">
+        <fieldset>
+          <legend>1 · Kamera</legend>
+          <div class="camera-choice">
+            <label><input type="radio" name="camera" value="1" checked> Kamera 1 <small>192.168.178.47</small></label>
+            <label><input type="radio" name="camera" value="2"> Kamera 2 <small>192.168.178.48</small></label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>2 · Zugang</legend>
+          <div class="grid">
+            <label>Benutzer<input id="username" value="kaderblick" required pattern="[a-z_][a-z0-9_-]{0,31}"></label>
+            <label>Passwort<input id="password" type="password" value="kaderblick" required></label>
+          </div>
+          <label class="show-password"><input id="show-password" type="checkbox"> Passwort anzeigen</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>3 · Ethernet</legend>
+          <div class="grid">
+            <label>IPv4-Adresse<input id="ip" value="192.168.178.47" required inputmode="decimal"></label>
+            <label>Netzmaske<input id="netmask" value="255.255.255.0" required inputmode="decimal"></label>
+          </div>
+          <label>Gateway <span>(optional)</span><input id="gateway" placeholder="z. B. 192.168.178.2" inputmode="decimal"></label>
+          <p class="hint">Für Kamera, Steuergerät und Hotspot im selben Netz ist kein Gateway erforderlich.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>4 · Zieldatenträger</legend>
+          <div class="drive-row">
+            <select id="drive" required><option value="">USB-Festplatte oder SD-Karte auswählen …</option></select>
+            <button id="refresh" type="button" class="secondary">Aktualisieren</button>
+          </div>
+          <p class="danger">Achtung: Der gewählte Datenträger wird vollständig gelöscht.</p>
+        </fieldset>
+
+        <button id="flash" type="submit" class="primary">Datenträger vollständig einrichten</button>
+      </form>
+
+      <section id="status" class="status" hidden>
+        <div class="status-line"><span id="status-text">Vorbereitung …</span><strong id="status-percent">0 %</strong></div>
+        <progress id="progress" max="100" value="0"></progress>
+      </section>
+    </main>
+    <script src="renderer.js"></script>
+  </body>
+</html>

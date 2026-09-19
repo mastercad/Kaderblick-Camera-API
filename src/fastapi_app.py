@@ -115,6 +115,44 @@ def stop_record():
     return {"status": status}
 
 
+# ==============================
+# Livestream
+# ==============================
+
+@app.post("/stream/start")
+def start_stream():
+    try:
+        with req_lock:
+            req_socket.send_string("STREAM_START")
+            if req_socket.poll(3000):
+                response = req_socket.recv_string()
+                if response == "OK":
+                    return {"status": "ok", "stream": True}
+                raise HTTPException(status_code=500, detail=response)
+        raise HTTPException(status_code=504, detail="Timeout beim Starten des Streams")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/stream/stop")
+def stop_stream():
+    try:
+        with req_lock:
+            req_socket.send_string("STREAM_STOP")
+            if req_socket.poll(3000):
+                response = req_socket.recv_string()
+                if response == "OK":
+                    return {"status": "ok", "stream": False}
+                raise HTTPException(status_code=500, detail=response)
+        raise HTTPException(status_code=504, detail="Timeout beim Stoppen des Streams")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/preview")
 def preview():
     def generate():
@@ -417,6 +455,7 @@ def get_status():
                     "width": camera_status.get("width", 3840),
                     "height": camera_status.get("height", 2160),
                     "fps": camera_status.get("fps", 30),
+                    "stream_active": camera_status.get("stream_active", False),
                 }
     except (zmq.ZMQError, Exception):
         camera_service_running = False

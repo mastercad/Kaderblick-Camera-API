@@ -1,0 +1,65 @@
+name: Veröffentlichung
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  image:
+    uses: ./.github/workflows/build-camera-image.yml
+
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            artifact: setup-linux
+          - os: windows-2025
+            artifact: setup-windows
+          - os: macos-15
+            artifact: setup-macos
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: setup-tool
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: setup-tool/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            setup-tool/dist/*.AppImage
+            setup-tool/dist/*.deb
+            setup-tool/dist/*.dmg
+            setup-tool/dist/*.exe
+            setup-tool/dist/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: [image, desktop]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: GitHub Release erstellen
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

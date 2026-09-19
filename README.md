@@ -55,7 +55,9 @@ Das System besteht aus zwei Services:
 
 ## 🚀 Installation
 
-Siehe [docs/INSTALLATION.md](docs/INSTALLATION.md) für detaillierte Installationsanweisungen:
+Für die produktiven Raspberry Pi 5 wird das plattformübergreifende **Kaderblick Kamera Setup** verwendet. Es schreibt ein vollständig vorinstalliertes Offline-Image auf eine externe USB-3-Festplatte/SSD oder SD-Karte. Das Setup-Tool lädt das Image beim Vorbereiten aus dem GitHub Release; der Raspberry benötigt später im Betrieb kein Internet.
+
+Siehe [docs/INSTALLATION.md](docs/INSTALLATION.md) für die vollständige Anleitung. Die folgenden Befehle dienen nur der manuellen Entwicklung auf einem bereits laufenden Pi:
 
 ```bash
 # System-Pakete
