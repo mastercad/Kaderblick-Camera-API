@@ -892,13 +892,15 @@ class TestResolutionConfigRoundtrip:
 # ===========================================================================
 
 class TestLastKnownGoodRes:
-    def test_initialized_after_successful_start(self):
+    def test_initialized_after_successful_start(self, resolution_config_file_at_real_path):
+        resolution_config_file_at_real_path(
+            {"width": 1920, "height": 1080, "fps": 30, "camera_fps": 60}
+        )
         zmq_mock, rep, pub, ctx = _make_zmq_mock()
         streamer = _make_streamer_mock()
         streamer.width = 1920
         streamer.height = 1080
         streamer.fps = 30
-        streamer.camera_fps = 60
         cs = _load_camera_service(zmq_mock, streamer)
 
         assert cs._last_known_good_res is not None
@@ -1196,4 +1198,3 @@ class TestSetResolutionUsesUsbReset:
              patch.object(self.cs, '_save_resolution_config'):
             self._run("SET_RESOLUTION:1920x1080:30")
         mock_sleep.assert_called_with(2)
-
