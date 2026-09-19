@@ -1,6 +1,6 @@
 # Kaderblick Kamera Setup
 
-Das Desktop-Tool lädt beim Einrichten das offizielle Raspberry Pi OS Lite direkt von Raspberry Pi, prüft dessen offizielle SHA-256-Prüfsumme und kombiniert es mit den Camera-API-Komponenten aus dem Setup-Release. Erst danach schreibt und konfiguriert es die externe USB-Festplatte/SSD oder SD-Karte vollständig. GitHub Actions erzeugt kein fertiges Raspberry-Pi-Image.
+Das Desktop-Tool lädt beim Einrichten das offizielle Raspberry Pi OS Lite direkt von Raspberry Pi, prüft dessen offizielle SHA-256-Prüfsumme und kombiniert es mit den bereits in der App enthaltenen Camera-API-Komponenten. Erst danach schreibt und konfiguriert es die externe USB-Festplatte/SSD oder SD-Karte vollständig. GitHub Actions erzeugt kein fertiges Raspberry-Pi-Image.
 
 Der Windows-, Linux- oder macOS-Rechner benötigt während der Vorbereitung Internet. Beim einmaligen ersten Start benötigt auch der Raspberry Pi Internet über Ethernet, um die schlanken System- und Python-Pakete zu installieren. Der spätere Kamerabetrieb ist vollständig ohne Internet möglich.
 
@@ -29,4 +29,4 @@ Ein Tag im Format `v*` startet `.github/workflows/release.yml`. GitHub Actions b
 | Windows x64 | Portable EXE | NSIS-Installer |
 | macOS Intel/Apple Silicon | ZIP | DMG |
 
-Die Installer/Portable-Pakete sowie das Camera-API-Laufzeitpaket mit SHA-256-Datei werden gemeinsam an das GitHub Release angehängt. Das Tool lädt dieses Laufzeitpaket erst beim Vorbereiten des Datenträgers. Das Kaderblick-Kamera-Icon wird als Paket-/App-Icon und sichtbar in der Oberfläche verwendet. Ohne hinterlegte Signaturzertifikate sind die Pakete technisch vollständig, können aber Warnungen von Windows SmartScreen oder macOS Gatekeeper auslösen.
+Die Camera-API-Komponenten sind direkt in allen Installer-/Portable-Paketen enthalten. Das Kaderblick-Kamera-Icon wird als Paket-/App-Icon und sichtbar in der Oberfläche verwendet. Ohne hinterlegte Signaturzertifikate sind die Pakete technisch vollständig, können aber Warnungen von Windows SmartScreen oder macOS Gatekeeper auslösen.

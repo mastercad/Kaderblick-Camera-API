@@ -48,6 +48,10 @@
       {
         "from": "../image-builder/stage-kaderblick/00-runtime/files/install-runtime.sh",
         "to": "assets/install-runtime.sh"
+      },
+      {
+        "from": "runtime/kaderblick-camera-runtime-bookworm-arm64.tar.xz",
+        "to": "assets/kaderblick-camera-runtime-bookworm-arm64.tar.xz"
       }
     ],
     "artifactName": "Kaderblick-Kamera-Setup-${version}-${os}-${arch}.${ext}",

@@ -20,7 +20,7 @@ Die produktiven Raspberry Pi 5 werden mit dem **Kaderblick Kamera Setup** vorber
 5. Die externe USB-Festplatte/SSD oder SD-Karte auswählen.
 6. Die vollständige Löschung des exakt angezeigten Datenträgers bestätigen.
 
-Das Tool lädt Raspberry Pi OS Lite direkt von Raspberry Pi und kontrolliert dessen offizielle SHA-256-Prüfsumme. Zusätzlich lädt es die geprüften Camera-API-Komponenten aus dem Kaderblick-Release und schreibt beides zusammen mit der individuellen Konfiguration auf den Datenträger. GitHub stellt kein vorgefertigtes Kameraimage bereit.
+Das Tool lädt Raspberry Pi OS Lite direkt von Raspberry Pi und kontrolliert dessen offizielle SHA-256-Prüfsumme. Die Camera-API-Komponenten sind bereits im Setup-Tool enthalten und werden zusammen mit dem Betriebssystem und der individuellen Konfiguration auf den Datenträger geschrieben. GitHub stellt kein vorgefertigtes Kameraimage bereit.
 
 Standardwerte:
 

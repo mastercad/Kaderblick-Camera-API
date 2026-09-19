@@ -13,6 +13,7 @@ jobs:
     uses: ./.github/workflows/build-camera-runtime.yml
 
   desktop:
+    needs: runtime
     strategy:
       fail-fast: false
       matrix:
@@ -29,6 +30,10 @@ jobs:
         working-directory: setup-tool
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: camera-runtime
+          path: setup-tool/runtime
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -56,6 +61,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
+          pattern: setup-*
           merge-multiple: true
       - name: GitHub Release erstellen
         uses: softprops/action-gh-release@v3

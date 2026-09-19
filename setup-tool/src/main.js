@@ -1,14 +1,29 @@
 "use strict";
 
 const path = require("node:path");
+const { execFile } = require("node:child_process");
+const { promisify } = require("node:util");
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const { validateConfiguration } = require("./config");
 const { getDrive, listDrives, startScanner, stopScanner } = require("./drives");
-const { downloadOfficialImage, downloadRuntimeBundle } = require("./download");
+const { downloadOfficialImage } = require("./download");
 const { elevatedFlash } = require("./elevated-flash");
+
+const execFileAsync = promisify(execFile);
+const RUNTIME_NAME = "kaderblick-camera-runtime-bookworm-arm64.tar.xz";
 
 let mainWindow;
 let flashing = false;
+
+async function getRuntimePath() {
+  if (process.env.KADERBLICK_RUNTIME) return process.env.KADERBLICK_RUNTIME;
+  if (app.isPackaged) return path.join(process.resourcesPath, "assets", RUNTIME_NAME);
+
+  const outputDirectory = path.join(app.getPath("userData"), "development-runtime");
+  const buildScript = path.join(__dirname, "..", "..", "image-builder", "build-runtime.sh");
+  await execFileAsync("bash", [buildScript, outputDirectory]);
+  return path.join(outputDirectory, RUNTIME_NAME);
+}
 
 function createWindow() {
   const iconPath = app.isPackaged
@@ -76,10 +91,7 @@ ipcMain.handle("flash:start", async (_event, request) => {
       path.join(app.getPath("userData"), "images"),
       sendProgress
     );
-    const runtimePath = process.env.KADERBLICK_RUNTIME || await downloadRuntimeBundle(
-      path.join(app.getPath("userData"), "runtime"),
-      sendProgress
-    );
+    const runtimePath = await getRuntimePath();
     const installScriptPath = app.isPackaged
       ? path.join(process.resourcesPath, "assets", "install-runtime.sh")
       : path.join(__dirname, "..", "..", "image-builder", "stage-kaderblick", "00-runtime", "files", "install-runtime.sh");

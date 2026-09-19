@@ -33,6 +33,7 @@ Thumbs.db
 
 # Setup-Tool: heruntergeladene Images und erzeugte Desktop-Pakete
 /setup-tool/image/
+/setup-tool/runtime/
 *.AppImage
 *.deb
 *.dmg

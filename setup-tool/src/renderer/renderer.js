@@ -44,7 +44,7 @@ document.querySelector("#refresh").addEventListener("click", async () => updateD
 window.cameraSetup.onDrivesChanged(updateDrives);
 window.cameraSetup.onProgress((progress) => {
   const percentage = Math.max(0, Math.min(100, Math.round(progress.percentage || 0)));
-  const labels = { downloading: "Raspberry Pi OS wird heruntergeladen", checking: "Offizielle Image-Prüfsumme wird geprüft", "downloading-runtime": "Camera-API wird heruntergeladen", "checking-runtime": "Camera-API-Paket wird geprüft", decompressing: "Image wird vorbereitet", flashing: "Datenträger wird geschrieben und eingerichtet", verifying: "Datenträger wird geprüft", finished: "Fertig" };
+  const labels = { downloading: "Raspberry Pi OS wird heruntergeladen", checking: "Offizielle Image-Prüfsumme wird geprüft", decompressing: "Image wird vorbereitet", flashing: "Datenträger wird geschrieben und eingerichtet", verifying: "Datenträger wird geprüft", finished: "Fertig" };
   statusText.textContent = labels[progress.type] || "Datenträger wird vorbereitet";
   statusPercent.textContent = `${percentage} %`;
   progressBar.value = percentage;
