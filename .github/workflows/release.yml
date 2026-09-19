@@ -19,7 +19,7 @@ jobs:
         include:
           - os: ubuntu-24.04
             artifact: setup-linux
-          - os: windows-2025
+          - os: windows-2022
             artifact: setup-windows
           - os: macos-15
             artifact: setup-macos

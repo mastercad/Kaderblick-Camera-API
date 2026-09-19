@@ -1,6 +1,6 @@
 {
   "name": "kaderblick-camera-setup",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Schreibt und konfiguriert einen einsatzfertigen Kaderblick-Kamera-Datenträger.",
   "main": "src/main.js",
   "author": "Kaderblick",
@@ -15,7 +15,7 @@
     "dist:publish": "electron-builder --publish always"
   },
   "dependencies": {
-    "balena-image-fs": "7.0.2",
+    "balena-image-fs": "7.6.21",
     "drivelist": "12.0.2",
     "etcher-sdk": "10.2.15"
   },
