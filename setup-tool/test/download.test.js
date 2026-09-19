@@ -5,12 +5,12 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
-const { IMAGE_PATTERN, sha256 } = require("../src/download");
+const { OFFICIAL_IMAGE_URL, sha256 } = require("../src/download");
 
-test("matches only release image assets", () => {
-  assert.equal(IMAGE_PATTERN.test("kaderblick-camera-os-0.1.0.img.xz"), true);
-  assert.equal(IMAGE_PATTERN.test("Kaderblick-Kamera-Setup.exe"), false);
-  assert.equal(IMAGE_PATTERN.test("kaderblick-camera-os.img"), false);
+test("uses the pinned official Raspberry Pi OS Lite image", () => {
+  const url = new URL(OFFICIAL_IMAGE_URL);
+  assert.equal(url.hostname, "downloads.raspberrypi.com");
+  assert.match(url.pathname, /raspios-bookworm-arm64-lite\.img\.xz$/);
 });
 
 test("calculates sha256", async () => {

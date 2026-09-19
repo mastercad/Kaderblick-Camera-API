@@ -1,7 +1,7 @@
 [Unit]
 Description=Kaderblick Camera API
-After=kaderblick-firstboot.service network.target camera_service.service
-Requires=kaderblick-firstboot.service
+After=network.target camera_service.service
+Requires=camera_service.service
 StartLimitIntervalSec=0
 
 [Service]

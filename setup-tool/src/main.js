@@ -4,7 +4,7 @@ const path = require("node:path");
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const { validateConfiguration } = require("./config");
 const { getDrive, listDrives, startScanner, stopScanner } = require("./drives");
-const { downloadLatestImage } = require("./download");
+const { downloadOfficialImage, downloadRuntimeBundle } = require("./download");
 const { elevatedFlash } = require("./elevated-flash");
 
 let mainWindow;
@@ -72,13 +72,22 @@ ipcMain.handle("flash:start", async (_event, request) => {
   flashing = true;
   try {
     const sendProgress = (progress) => mainWindow?.webContents.send("flash:progress", progress);
-    const imagePath = process.env.KADERBLICK_IMAGE || await downloadLatestImage(
+    const imagePath = process.env.KADERBLICK_IMAGE || await downloadOfficialImage(
       path.join(app.getPath("userData"), "images"),
       sendProgress
     );
+    const runtimePath = process.env.KADERBLICK_RUNTIME || await downloadRuntimeBundle(
+      path.join(app.getPath("userData"), "runtime"),
+      sendProgress
+    );
+    const installScriptPath = app.isPackaged
+      ? path.join(process.resourcesPath, "assets", "install-runtime.sh")
+      : path.join(__dirname, "..", "..", "image-builder", "stage-kaderblick", "00-runtime", "files", "install-runtime.sh");
     await elevatedFlash({
       helperPath: path.join(app.getAppPath(), "src", "helper.js"),
       imagePath,
+      runtimePath,
+      installScriptPath,
       drive: {
         raw: destination.raw,
         size: destination.size

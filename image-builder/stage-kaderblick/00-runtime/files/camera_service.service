@@ -1,7 +1,6 @@
 [Unit]
 Description=Arducam Camera Service
-After=kaderblick-firstboot.service
-Requires=kaderblick-firstboot.service
+After=local-fs.target
 StartLimitIntervalSec=0
 
 [Service]

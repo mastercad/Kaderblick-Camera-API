@@ -60,12 +60,14 @@ function executeHelper(helperPath, jobPath) {
   });
 }
 
-async function elevatedFlash({ helperPath, imagePath, drive, configuration, onProgress }) {
+async function elevatedFlash({ helperPath, imagePath, runtimePath, installScriptPath, drive, configuration, onProgress }) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kaderblick-flash-"));
   const jobPath = path.join(directory, "job.json");
   const progressPath = path.join(directory, "progress.json");
   const job = {
     imagePath,
+    runtimePath,
+    installScriptPath,
     driveRaw: drive.raw,
     driveSize: drive.size,
     configuration,

@@ -1,0 +1,34 @@
+name: Camera-Runtime
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v7
+
+      - name: Laufzeitpaket bauen
+        run: |
+          chmod +x image-builder/build-runtime.sh
+          image-builder/build-runtime.sh "$GITHUB_WORKSPACE"
+
+      - name: Laufzeitpaket validieren
+        run: |
+          sha256sum --check kaderblick-camera-runtime-bookworm-arm64.tar.xz.sha256
+          tar -tJf kaderblick-camera-runtime-bookworm-arm64.tar.xz | grep -qx './install-runtime.sh'
+          test -z "$(find . -maxdepth 1 -type f -name '*.img*' -print -quit)"
+
+      - name: Laufzeit-Artefakt hochladen
+        uses: actions/upload-artifact@v7
+        with:
+          name: camera-runtime
+          path: |
+            kaderblick-camera-runtime-bookworm-arm64.tar.xz
+            kaderblick-camera-runtime-bookworm-arm64.tar.xz.sha256
+          if-no-files-found: error

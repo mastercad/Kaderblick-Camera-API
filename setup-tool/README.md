@@ -1,6 +1,8 @@
 # Kaderblick Kamera Setup
 
-Das Desktop-Tool lädt das von GitHub Actions erzeugte Offline-Laufzeit-Image aus dem neuesten GitHub Release, prüft dessen SHA-256-Prüfsumme, schreibt es auf eine externe USB-Festplatte/SSD oder SD-Karte und trägt die individuelle Kamera-, Konto- und Ethernet-Konfiguration direkt in dessen FAT-Bootpartition ein. Der Setup-Rechner benötigt dafür Internet. Der fertig eingerichtete Raspberry Pi benötigt im Betrieb kein Internet.
+Das Desktop-Tool lädt beim Einrichten das offizielle Raspberry Pi OS Lite direkt von Raspberry Pi, prüft dessen offizielle SHA-256-Prüfsumme und kombiniert es mit den Camera-API-Komponenten aus dem Setup-Release. Erst danach schreibt und konfiguriert es die externe USB-Festplatte/SSD oder SD-Karte vollständig. GitHub Actions erzeugt kein fertiges Raspberry-Pi-Image.
+
+Der Windows-, Linux- oder macOS-Rechner benötigt während der Vorbereitung Internet. Beim einmaligen ersten Start benötigt auch der Raspberry Pi Internet über Ethernet, um die schlanken System- und Python-Pakete zu installieren. Der spätere Kamerabetrieb ist vollständig ohne Internet möglich.
 
 ## Entwicklung
 
@@ -11,7 +13,7 @@ npm test
 npm start
 ```
 
-Das Schreiben eines Blockgeräts benötigt Administratorrechte. Für Entwicklungstests kann mit `KADERBLICK_IMAGE=/pfad/zum/image.img.xz npm start` ein lokales Image statt des GitHub-Downloads verwendet werden.
+Das Schreiben eines Blockgeräts benötigt Administratorrechte. Für Entwicklungstests können mit `KADERBLICK_IMAGE=/pfad/zum/image.img.xz` und `KADERBLICK_RUNTIME=/pfad/zum/runtime.tar.xz` lokale Dateien statt der Downloads verwendet werden.
 
 ## Netzwerk
 
@@ -19,7 +21,7 @@ Der Raspberry Pi stellt kein WLAN bereit. `wlan0` und Bluetooth sind im Image de
 
 ## Veröffentlichung
 
-Ein Tag im Format `v*` startet `.github/workflows/release.yml`. GitHub Actions baut zuerst das ARM64-Kameraimage und anschließend die nativen Setup-Pakete:
+Ein Tag im Format `v*` startet `.github/workflows/release.yml`. GitHub Actions bündelt die Camera-API-Installationsdateien und baut die nativen Setup-Pakete. Ein bootfähiges Raspberry-Pi-Image wird nicht in CI gebaut oder veröffentlicht:
 
 | Plattform | Portable | Installer |
 |---|---|---|
@@ -27,4 +29,4 @@ Ein Tag im Format `v*` startet `.github/workflows/release.yml`. GitHub Actions b
 | Windows x64 | Portable EXE | NSIS-Installer |
 | macOS Intel/Apple Silicon | ZIP | DMG |
 
-Alle Dateien einschließlich Image und SHA-256-Datei werden gemeinsam an das GitHub Release angehängt. Das Kaderblick-Kamera-Icon wird als Paket-/App-Icon und sichtbar in der Oberfläche verwendet. Ohne hinterlegte Signaturzertifikate sind die Pakete technisch vollständig, können aber Warnungen von Windows SmartScreen oder macOS Gatekeeper auslösen.
+Die Installer/Portable-Pakete sowie das Camera-API-Laufzeitpaket mit SHA-256-Datei werden gemeinsam an das GitHub Release angehängt. Das Tool lädt dieses Laufzeitpaket erst beim Vorbereiten des Datenträgers. Das Kaderblick-Kamera-Icon wird als Paket-/App-Icon und sichtbar in der Oberfläche verwendet. Ohne hinterlegte Signaturzertifikate sind die Pakete technisch vollständig, können aber Warnungen von Windows SmartScreen oder macOS Gatekeeper auslösen.

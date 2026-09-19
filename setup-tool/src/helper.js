@@ -35,6 +35,8 @@ async function main() {
   let progressWrites = Promise.resolve();
   await flashImage({
     imagePath: job.imagePath,
+    runtimePath: job.runtimePath,
+    installScriptPath: job.installScriptPath,
     destination,
     configuration,
     onProgress: (progress) => {

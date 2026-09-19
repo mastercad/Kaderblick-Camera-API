@@ -1,6 +1,6 @@
 # Installation der Kamera
 
-Die produktiven Raspberry Pi 5 werden mit dem **Kaderblick Kamera Setup** vorbereitet. Eine nachträgliche Installation auf dem Raspberry oder eine Internetverbindung am späteren Einsatzort ist nicht erforderlich.
+Die produktiven Raspberry Pi 5 werden mit dem **Kaderblick Kamera Setup** vorbereitet. Am späteren Einsatzort ist keine Internetverbindung erforderlich.
 
 ## Voraussetzungen
 
@@ -8,7 +8,8 @@ Die produktiven Raspberry Pi 5 werden mit dem **Kaderblick Kamera Setup** vorber
 - externe USB-3-Festplatte/SSD oder alternativ eine SD-Karte
 - Arducam B0589 (`04b4:0822`)
 - ausreichend dimensioniertes Netzteil; bei gleichzeitig angeschlossener USB-Kamera und USB-Festplatte ist die stabile Stromversorgung besonders wichtig
-- Internetzugang nur auf dem Windows-, Linux- oder macOS-Rechner, der den Datenträger vorbereitet
+- Internetzugang auf dem Windows-, Linux- oder macOS-Rechner während der Vorbereitung
+- Internetzugang über Ethernet beim einmaligen ersten Start des Raspberry Pi
 
 ## Datenträger vorbereiten
 
@@ -19,7 +20,7 @@ Die produktiven Raspberry Pi 5 werden mit dem **Kaderblick Kamera Setup** vorber
 5. Die externe USB-Festplatte/SSD oder SD-Karte auswählen.
 6. Die vollständige Löschung des exakt angezeigten Datenträgers bestätigen.
 
-Das Tool lädt das passende Image aus dem GitHub Release, kontrolliert dessen SHA-256-Prüfsumme, überschreibt den gewählten Datenträger vollständig und prüft das Schreibergebnis.
+Das Tool lädt Raspberry Pi OS Lite direkt von Raspberry Pi und kontrolliert dessen offizielle SHA-256-Prüfsumme. Zusätzlich lädt es die geprüften Camera-API-Komponenten aus dem Kaderblick-Release und schreibt beides zusammen mit der individuellen Konfiguration auf den Datenträger. GitHub stellt kein vorgefertigtes Kameraimage bereit.
 
 Standardwerte:
 
@@ -37,7 +38,7 @@ Benutzer und Passwort sind standardmäßig jeweils `kaderblick`. Das Konto wird 
 3. Kamera, Audio-Hardware, Ethernet und Motorsteuerung anschließen.
 4. Raspberry Pi einschalten.
 
-Raspberry Pi 5 unterstützt USB-Massenspeicher als Bootmedium. Das Image setzt `usb_max_current_enable=1`; die Root-Partition wird beim ersten Start automatisch erweitert und der Pi startet dabei einmal selbstständig neu. Anschließend wird das ext4-Dateisystem auf die gesamte Kapazität des Datenträgers vergrößert. Danach werden individuelle SSH-Hostschlüssel, Konto, Hostname, statisches Ethernet und SMB offline konfiguriert und die Camera-Dienste gestartet.
+Raspberry Pi 5 unterstützt USB-Massenspeicher als Bootmedium. Das Tool setzt `usb_max_current_enable=1`. Beim ersten Start erweitert Raspberry Pi OS die Root-Partition und installiert anschließend über die vorhandene Ethernet-Internetverbindung Camera API, USB-/Audio-Werkzeuge, SSH und SMB. Dabei kann der Pi selbstständig neu starten. Danach sind individuelle SSH-Hostschlüssel, Konto, Hostname, statisches Ethernet und SMB konfiguriert und die Camera-Dienste gestartet. Ab diesem Zeitpunkt benötigt die Kamera kein Internet mehr.
 
 ## Netzwerk
 
@@ -56,7 +57,7 @@ Die Wahl von `.1` oder `.2` als Gateway verändert nicht die WLAN-Reichweite des
 - Python-Venv und Camera API
 - V4L2/UVC, Arducam-udev-Regel und USB-Reset-Berechtigung
 - `lgpio`, OpenCV, ZeroMQ, FastAPI/Uvicorn
-- ALSA/`arecord` und FFmpeg
+- ALSA/`arecord`
 - OpenSSH
 - Samba-Freigabe `recordings`
 - Offline-Zeitfortschreibung mit `fake-hwclock`

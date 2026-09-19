@@ -1,6 +1,6 @@
 {
   "name": "kaderblick-camera-setup",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Schreibt und konfiguriert einen einsatzfertigen Kaderblick-Kamera-Datenträger.",
   "main": "src/main.js",
   "author": "Kaderblick",
@@ -44,14 +44,28 @@
       {
         "from": "../assets/kaderblick_camera_api_appicon.png",
         "to": "assets/kaderblick_camera_api_appicon.png"
+      },
+      {
+        "from": "../image-builder/stage-kaderblick/00-runtime/files/install-runtime.sh",
+        "to": "assets/install-runtime.sh"
       }
     ],
     "artifactName": "Kaderblick-Kamera-Setup-${version}-${os}-${arch}.${ext}",
     "win": {
       "icon": "../assets/kaderblick_camera_api_appicon.png",
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "requestedExecutionLevel": "requireAdministrator"
     },
@@ -68,16 +82,38 @@
       "icon": "../assets/kaderblick_camera_api_appicon.png",
       "maintainer": "Kaderblick",
       "target": [
-        { "target": "AppImage", "arch": ["x64"] },
-        { "target": "deb", "arch": ["x64"] }
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "category": "Utility"
     },
     "mac": {
       "icon": "../assets/kaderblick_camera_api_appicon.png",
       "target": [
-        { "target": "dmg", "arch": ["x64", "arm64"] },
-        { "target": "zip", "arch": ["x64", "arm64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "category": "public.app-category.utilities"
     }

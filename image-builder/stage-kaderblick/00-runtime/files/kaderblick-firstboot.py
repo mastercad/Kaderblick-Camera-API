@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Wendet die beim Flashen erzeugte Konfiguration ohne Netzwerkzugriff an."""
+"""Wendet die beim Flashen erzeugte Kamerakonfiguration an."""
 
 import json
 import ipaddress
+import os
 import pathlib
 import pwd
 import re
@@ -85,7 +86,6 @@ def configure_services(username: str) -> None:
         dropin = pathlib.Path(f"/etc/systemd/system/{service}.service.d/user.conf")
         dropin.parent.mkdir(parents=True, exist_ok=True)
         dropin.write_text(f"[Service]\nUser={username}\nGroup={username}\n", encoding="utf-8")
-    run("systemctl", "daemon-reload")
     sudoers = pathlib.Path("/etc/sudoers.d/kaderblick-api-power")
     sudoers.write_text(
         f"{username} ALL=(root) NOPASSWD: /usr/sbin/shutdown, /usr/sbin/reboot\n",
@@ -106,7 +106,10 @@ def configure_hostname(hostname: str) -> None:
     lines = [line for line in hosts.splitlines() if not line.startswith("127.0.1.1")]
     lines.append(f"127.0.1.1\t{hostname}")
     hosts_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    run("hostnamectl", "set-hostname", hostname)
+    timezone = pathlib.Path("/etc/localtime")
+    timezone.unlink(missing_ok=True)
+    os.symlink("/usr/share/zoneinfo/Europe/Berlin", timezone)
+    pathlib.Path("/etc/timezone").write_text("Europe/Berlin\n", encoding="utf-8")
 
 
 def configure_network(config: dict) -> None:
