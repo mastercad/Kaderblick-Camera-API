@@ -16,7 +16,7 @@ Die produktiven Raspberry Pi 5 werden mit dem **Kaderblick Kamera Setup** vorber
 1. Portable Version oder Installer aus dem neuesten GitHub Release starten.
 2. Kamera 1 oder Kamera 2 auswählen.
 3. Konto, Passwort, IPv4-Adresse und Netzmaske eintragen.
-4. Gateway nur eintragen, wenn Verkehr in ein anderes Subnetz geleitet werden muss. Für den lokalen Zugriff innerhalb `192.168.178.0/24` bleibt das Feld leer.
+4. Den für den Einsatz vorgesehenen Gateway eintragen (`192.168.178.1` im Heimnetz oder `192.168.178.2` am Kamera-Hotspot).
 5. Die externe USB-Festplatte/SSD oder SD-Karte auswählen.
 6. Die vollständige Löschung des exakt angezeigten Datenträgers bestätigen.
 
@@ -38,18 +38,104 @@ Benutzer und Passwort sind standardmäßig jeweils `kaderblick`. Das Konto wird 
 3. Kamera, Audio-Hardware, Ethernet und Motorsteuerung anschließen.
 4. Raspberry Pi einschalten.
 
-Raspberry Pi 5 unterstützt USB-Massenspeicher als Bootmedium. Das Tool setzt `usb_max_current_enable=1`. Beim ersten Start erweitert Raspberry Pi OS die Root-Partition und installiert anschließend über die vorhandene Ethernet-Internetverbindung Camera API, USB-/Audio-Werkzeuge, SSH und SMB. Dabei kann der Pi selbstständig neu starten. Danach sind individuelle SSH-Hostschlüssel, Konto, Hostname, statisches Ethernet und SMB konfiguriert und die Camera-Dienste gestartet. Ab diesem Zeitpunkt benötigt die Kamera kein Internet mehr.
+Raspberry Pi 5 unterstützt USB-Massenspeicher als Bootmedium. Das Tool setzt `usb_max_current_enable=1`. Vor dem einmaligen Init ist die gewählte statische Kamera-IP bereits aktiv; der Internetzugang wird vorübergehend um eine DHCP-Route ergänzt, damit Camera API, USB-/Audio-Werkzeuge, SSH und SMB installiert werden können. Nach erfolgreicher Einrichtung schreibt das Init die endgültige statische Netzwerkkonfiguration mit dem gewählten Gateway, entfernt seinen eigenen Boot-Eintrag und startet genau einmal neu. Bei späteren Starts werden weder Init noch Updates erneut ausgeführt. Danach benötigt die Kamera kein Internet mehr.
+
+Bei jedem späteren Boot wird die durch `fake-hwclock` fortgeschriebene Uhrzeit geladen. Ist in diesem Moment Internet erreichbar, gleicht ein auf 15 Sekunden begrenzter Einmaldienst die Uhr ab. Dieser Dienst läuft zwingend vor den Kamera-Diensten und endet anschließend. Ohne Internet wird der Abgleich übersprungen. Es existieren weder ein Zeitabgleich-Timer noch ein späterer Wiederholungsversuch während des Aufnahmebetriebs. TRIM läuft ebenfalls nur in diesem Boot-Schritt. Automatische APT-, TRIM-, Logrotate-, Man-DB-, Dateisystemprüfungs- und temporäre Aufräumtimer sind deaktiviert; `cron` wird nicht gestartet.
+
+## Verhalten während einer Aufnahme
+
+Es werden bei Aufnahmebeginn keine Systemdienste dynamisch beendet und danach wieder gestartet. Die nicht benötigten periodischen Arbeiten sind dauerhaft deaktiviert und können deshalb gar nicht erst in eine Aufnahme hineinlaufen. Dadurch entstehen keine zusätzlichen Start-/Stopp-Übergänge im Aufnahmebetrieb.
+
+Aktiv bleiben die für den Betrieb notwendigen Komponenten:
+
+- `camera_service`: Kamera, Aufnahme, Watchdog und Vorschaubilder
+- `kaderblick_app`: HTTP-API einschließlich Statusprüfung und optionalem Stream
+- NetworkManager, Netplan und die grundlegenden Systemdienste für Ethernet
+- `smbd` für die Aufnahmefreigabe
+- `sshd` für Administration
+- Journal, Geräteverwaltung und D-Bus für Fehlerdiagnose und Hardwarebetrieb
+
+API-Zugriffe werden nicht als einzelne Access-Log-Zeilen auf den Datenträger geschrieben. Fehler sowie Start, Stopp und Zustandsänderungen bleiben im begrenzten Journal erhalten. Der Swap-Dienst richtet beim Boot lediglich den vorhandenen Swap-Speicher ein und bleibt nicht als arbeitender Hintergrundprozess aktiv; der Swap wird als Notreserve gegen einen Speicherabbruch beibehalten.
 
 ## Netzwerk
 
-Der Raspberry stellt kein WLAN bereit. WLAN und Bluetooth sind im Image deaktiviert. Ethernet wird direkt durch `systemd-networkd` konfiguriert, ohne Netplan oder NetworkManager.
+Der Raspberry stellt kein WLAN bereit. WLAN und Bluetooth sind im Image deaktiviert. Ethernet wird wie auf der stabil laufenden PoC-Installation über Netplan mit NetworkManager konfiguriert. Während der einmaligen Einrichtung erhält die Verbindung zusätzlich zur festen Kamera-IP eine DHCP-Konfiguration für den Internetzugang. Danach bleibt ausschließlich die konfigurierte statische Netplan-Verbindung aktiv.
 
-Ein Gateway ist für Geräte im selben Subnetz nicht erforderlich. Beispiele bei Netzmaske `255.255.255.0`:
+### Netplan-Referenzkonfigurationen
 
-- Kamera `192.168.178.47`, Steuergerät `192.168.178.20`: kein Gateway erforderlich.
-- Kamera `192.168.178.47`, Zugriff aus einem anderen Subnetz: Routeradresse als Gateway eintragen.
+Die Konfiguration wird auf der Kamera als `/etc/netplan/01-static-ip.yaml` mit Dateimodus `0600` abgelegt.
 
-Die Wahl von `.1` oder `.2` als Gateway verändert nicht die WLAN-Reichweite des separaten Hotspots.
+Kamera 1 im Heimnetz:
+
+```yaml
+network:
+  version: 2
+  renderer: NetworkManager
+  ethernets:
+    eth0:
+      dhcp4: false
+      addresses:
+        - 192.168.178.47/24
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+      routes:
+        - to: 0.0.0.0/0
+          via: 192.168.178.1
+```
+
+Kamera 1 am Kamera-Hotspot:
+
+```yaml
+network:
+  version: 2
+  renderer: NetworkManager
+  ethernets:
+    eth0:
+      dhcp4: false
+      addresses:
+        - 192.168.178.47/24
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+      routes:
+        - to: 0.0.0.0/0
+          via: 192.168.178.2
+```
+
+Kamera 2 im Heimnetz:
+
+```yaml
+network:
+  version: 2
+  renderer: NetworkManager
+  ethernets:
+    eth0:
+      dhcp4: false
+      addresses:
+        - 192.168.178.48/24
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+      routes:
+        - to: 0.0.0.0/0
+          via: 192.168.178.1
+```
+
+Kamera 2 am Kamera-Hotspot:
+
+```yaml
+network:
+  version: 2
+  renderer: NetworkManager
+  ethernets:
+    eth0:
+      dhcp4: false
+      addresses:
+        - 192.168.178.48/24
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+      routes:
+        - to: 0.0.0.0/0
+          via: 192.168.178.2
+```
 
 ## Vorinstallierte Komponenten
 
@@ -62,7 +148,7 @@ Die Wahl von `.1` oder `.2` als Gateway verändert nicht die WLAN-Reichweite des
 - Samba-Freigabe `recordings`
 - Offline-Zeitfortschreibung mit `fake-hwclock`
 - begrenztes persistentes Journal
-- wöchentlicher `fstrim.timer`
+- einmaliger Zeitabgleich und TRIM ausschließlich beim Boot vor dem Start der Kamera-Dienste
 
 Die Aufnahmen liegen unter `/srv/kaderblick/recordings` und werden durch den Share `recordings` bereitgestellt.
 
@@ -73,7 +159,7 @@ Folgende frühere Vorschläge werden für das produktive Image nicht gesetzt:
 - `arm_freq=1800` und `gpu_freq=250`: keine belastbare Performanceverbesserung für den Pi 5; 1800 MHz läge unter seinem regulären CPU-Takt.
 - `over_voltage=-2`: Undervolting ohne Messung kann USB- und Aufnahmestabilität verschlechtern.
 - `commit=600`: vergrößert bei Stromausfall das mögliche Datenverlustfenster erheblich.
-- synchrones `discard`: wird nicht parallel zu periodischem `fstrim` aktiviert.
+- synchrones `discard`: zusätzliche synchrone SSD-Arbeit während einer Aufnahme wird vermieden.
 
 `noatime` ist bereits Bestandteil des minimalen Basisimages.
 

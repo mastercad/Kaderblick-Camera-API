@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { netmaskToPrefix, validateConfiguration } = require("../src/config");
+const { netmaskToPrefix, validateConfiguration, validatePreparedConfiguration } = require("../src/config");
 
 test("converts contiguous netmasks", () => {
   assert.equal(netmaskToPrefix("255.255.255.0"), 24);
@@ -32,6 +32,26 @@ test("creates a gateway-free camera configuration", () => {
     prefix: 24,
     gateway: ""
   });
+});
+
+test("validates the prepared configuration again without expecting a netmask", () => {
+  const prepared = validateConfiguration({
+    camera: 1,
+    username: "kaderblick",
+    password: "kaderblick",
+    ip: "192.168.178.47",
+    netmask: "255.255.255.0",
+    gateway: "192.168.178.1"
+  });
+  assert.deepEqual(validatePreparedConfiguration(prepared), prepared);
+  assert.throws(
+    () => validatePreparedConfiguration({ ...prepared, prefix: 33 }),
+    /Präfixlänge/
+  );
+  assert.throws(
+    () => validatePreparedConfiguration({ ...prepared, hostname: "fremd" }),
+    /Kamerakonfiguration/
+  );
 });
 
 test("rejects invalid accounts and addresses", () => {

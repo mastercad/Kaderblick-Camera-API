@@ -26,7 +26,20 @@ async function pollProgress(progressPath, onProgress, done) {
   }
 }
 
-function executeHelper(helperPath, jobPath) {
+function linuxHelperInvocation(helperPath, bootstrapPath, jobPath, appImage = process.env.APPIMAGE) {
+  return {
+    executable: "pkexec",
+    args: [
+      "/usr/bin/env",
+      "ELECTRON_RUN_AS_NODE=1",
+      appImage || process.execPath,
+      appImage ? bootstrapPath : helperPath,
+      jobPath
+    ]
+  };
+}
+
+function executeHelper(helperPath, bootstrapPath, jobPath) {
   const environment = { ...process.env, ELECTRON_RUN_AS_NODE: "1" };
   if (process.platform === "win32") {
     return new Promise((resolve, reject) => {
@@ -46,8 +59,7 @@ function executeHelper(helperPath, jobPath) {
       executable = "/usr/bin/osascript";
       args = ["-e", appleScript];
     } else {
-      executable = "pkexec";
-      args = ["/usr/bin/env", "ELECTRON_RUN_AS_NODE=1", process.execPath, helperPath, jobPath];
+      ({ executable, args } = linuxHelperInvocation(helperPath, bootstrapPath, jobPath));
     }
     const child = spawn(executable, args, { env: process.env });
     let stderr = "";
@@ -64,25 +76,40 @@ async function elevatedFlash({ helperPath, imagePath, runtimePath, installScript
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "kaderblick-flash-"));
   const jobPath = path.join(directory, "job.json");
   const progressPath = path.join(directory, "progress.json");
+  const bootstrapPath = path.join(directory, "helper-bootstrap.js");
+  const stagedRuntimePath = path.join(directory, "camera-runtime.tar.xz");
+  const stagedInstallScriptPath = path.join(directory, "install-runtime.sh");
   const job = {
     imagePath,
-    runtimePath,
-    installScriptPath,
+    runtimePath: stagedRuntimePath,
+    installScriptPath: stagedInstallScriptPath,
     driveRaw: drive.raw,
     driveSize: drive.size,
     configuration,
     progressPath
   };
+  await fs.copyFile(runtimePath, stagedRuntimePath);
+  await fs.copyFile(installScriptPath, stagedInstallScriptPath);
+  await fs.chmod(stagedRuntimePath, 0o644);
+  await fs.chmod(stagedInstallScriptPath, 0o755);
   await fs.writeFile(jobPath, JSON.stringify(job), { mode: 0o600 });
+  await fs.writeFile(
+    bootstrapPath,
+    '"use strict";\nconst path = require("node:path");\nrequire(path.join(process.resourcesPath, "app.asar", "src", "helper.js"));\n',
+    { mode: 0o644 }
+  );
   const done = { value: false };
   const polling = pollProgress(progressPath, onProgress, done);
   try {
-    await executeHelper(helperPath, jobPath);
+    await executeHelper(helperPath, bootstrapPath, jobPath);
   } finally {
     done.value = true;
     await polling;
     await Promise.allSettled([
       fs.unlink(jobPath),
+      fs.unlink(bootstrapPath),
+      fs.unlink(stagedRuntimePath),
+      fs.unlink(stagedInstallScriptPath),
       fs.unlink(progressPath),
       fs.unlink(`${progressPath}.new`)
     ]);
@@ -90,4 +117,4 @@ async function elevatedFlash({ helperPath, imagePath, runtimePath, installScript
   }
 }
 
-module.exports = { elevatedFlash, quote };
+module.exports = { elevatedFlash, linuxHelperInvocation, quote };

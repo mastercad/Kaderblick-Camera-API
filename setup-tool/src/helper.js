@@ -1,9 +1,11 @@
 "use strict";
 
+require("./direct-io-compat");
+
 const fs = require("node:fs/promises");
 const drivelist = require("drivelist");
 const { sourceDestination } = require("etcher-sdk");
-const { validateConfiguration } = require("./config");
+const { validatePreparedConfiguration } = require("./config");
 const { flashImage } = require("./flash");
 
 async function writeProgress(filename, progress) {
@@ -16,7 +18,7 @@ async function main() {
   const jobPath = process.argv[2];
   if (!jobPath) throw new Error("Flash-Auftrag fehlt.");
   const job = JSON.parse(await fs.readFile(jobPath, "utf8"));
-  const configuration = validateConfiguration(job.configuration);
+  const configuration = validatePreparedConfiguration(job.configuration);
   const drives = await drivelist.list();
   const drive = drives.find((candidate) => candidate.raw === job.driveRaw);
   if (!drive || drive.isSystem || drive.isVirtual || drive.isReadOnly) {
@@ -30,7 +32,7 @@ async function main() {
     drive,
     unmountOnSuccess: true,
     write: true,
-    direct: true
+    direct: false
   });
   let progressWrites = Promise.resolve();
   await flashImage({

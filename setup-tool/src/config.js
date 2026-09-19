@@ -91,4 +91,30 @@ function validateConfiguration(input) {
   };
 }
 
-module.exports = { CAMERA_DEFAULTS, netmaskToPrefix, validateConfiguration };
+function validatePreparedConfiguration(input) {
+  const camera = Number(input.camera);
+  const username = String(input.username || "").trim();
+  const password = String(input.password || "");
+  const ip = String(input.ip || "").trim();
+  const gateway = String(input.gateway || "").trim();
+  const prefix = Number(input.prefix);
+  const hostname = `kamera${camera}`;
+
+  if (input.schema !== 1 || ![1, 2].includes(camera) || input.hostname !== hostname) {
+    throw new Error("Die vorbereitete Kamerakonfiguration ist ungültig.");
+  }
+  validateUsername(username);
+  if (password.length < 1 || password.includes("\n") || password.includes("\r")) {
+    throw new Error("Das Passwort darf nicht leer sein und keine Zeilenumbrüche enthalten.");
+  }
+  if (net.isIP(ip) !== 4) throw new Error("Die IPv4-Adresse ist ungültig.");
+  if (gateway && net.isIP(gateway) !== 4) throw new Error("Der Gateway ist ungültig.");
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+    throw new Error("Die Präfixlänge ist ungültig.");
+  }
+  validateNetwork(ip, gateway, prefix);
+
+  return { schema: 1, camera, hostname, username, password, ip, prefix, gateway };
+}
+
+module.exports = { CAMERA_DEFAULTS, netmaskToPrefix, validateConfiguration, validatePreparedConfiguration };

@@ -1,5 +1,7 @@
 "use strict";
 
+require("./direct-io-compat");
+
 const { scanner } = require("etcher-sdk");
 
 let deviceScanner;
@@ -11,7 +13,7 @@ async function startScanner(onChange) {
     includeVirtualDrives: () => false,
     unmountOnSuccess: true,
     write: true,
-    direct: true
+    direct: false
   });
   deviceScanner = new scanner.Scanner([adapter]);
   deviceScanner.on("attach", onChange);

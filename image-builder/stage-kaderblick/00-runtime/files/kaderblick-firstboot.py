@@ -112,23 +112,40 @@ def configure_hostname(hostname: str) -> None:
     pathlib.Path("/etc/timezone").write_text("Europe/Berlin\n", encoding="utf-8")
 
 
-def configure_network(config: dict) -> None:
+def render_network(config: dict) -> str:
     gateway = config.get("gateway", "")
     address = f"{config['ip']}/{config['prefix']}"
-    gateway_line = f"Gateway={gateway}\n" if gateway else ""
-    network = f"""[Match]
-Name=eth0
-
-[Network]
-Address={address}
-{gateway_line}DHCP=no
-LinkLocalAddressing=no
-IPv6AcceptRA=no
+    route = ""
+    if gateway:
+        route = f"""      routes:
+        - to: 0.0.0.0/0
+          via: {gateway}
 """
-    path = pathlib.Path("/etc/systemd/network/10-kaderblick-eth0.network")
-    path.parent.mkdir(parents=True, exist_ok=True)
+    return f"""network:
+  version: 2
+  renderer: NetworkManager
+  ethernets:
+    eth0:
+      dhcp4: false
+      addresses:
+        - {address}
+      nameservers:
+        addresses: [8.8.8.8, 8.8.4.4]
+{route}"""
+
+
+def configure_network(config: dict) -> None:
+    network = render_network(config)
+    netplan_directory = pathlib.Path("/etc/netplan")
+    netplan_directory.mkdir(parents=True, exist_ok=True)
+    for path in netplan_directory.glob("*.yaml"):
+        path.unlink()
+    path = netplan_directory / "01-static-ip.yaml"
     path.write_text(network, encoding="utf-8")
     path.chmod(0o600)
+    run("netplan", "generate")
+    run("nmcli", "connection", "delete", "kaderblick-setup")
+    pathlib.Path("/etc/systemd/network/10-kaderblick-eth0.network").unlink(missing_ok=True)
 
 
 def configure_samba(username: str, password: str) -> None:
@@ -160,8 +177,8 @@ def main() -> None:
     username = configure_account(config)
     configure_hostname(config["hostname"])
     configure_services(username)
-    configure_network(config)
     configure_samba(username, config["password"])
+    configure_network(config)
     config_path.unlink()
     pathlib.Path("/var/lib/kaderblick-configured").touch(mode=0o600)
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=Kaderblick boot-only clock and storage preparation
+After=local-fs.target NetworkManager.service fake-hwclock.service
+Before=camera_service.service kaderblick_app.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/kaderblick-boot-preflight
+TimeoutStartSec=15
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

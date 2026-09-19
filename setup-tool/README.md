@@ -2,7 +2,7 @@
 
 Das Desktop-Tool lädt beim Einrichten das offizielle Raspberry Pi OS Lite direkt von Raspberry Pi, prüft dessen offizielle SHA-256-Prüfsumme und kombiniert es mit den bereits in der App enthaltenen Camera-API-Komponenten. Erst danach schreibt und konfiguriert es die externe USB-Festplatte/SSD oder SD-Karte vollständig. GitHub Actions erzeugt kein fertiges Raspberry-Pi-Image.
 
-Der Windows-, Linux- oder macOS-Rechner benötigt während der Vorbereitung Internet. Beim einmaligen ersten Start benötigt auch der Raspberry Pi Internet über Ethernet, um die schlanken System- und Python-Pakete zu installieren. Der spätere Kamerabetrieb ist vollständig ohne Internet möglich.
+Der Windows-, Linux- oder macOS-Rechner benötigt während der Vorbereitung Internet. Beim einmaligen ersten Start benötigt auch der Raspberry Pi Internet über Ethernet. Seine statische Kamera-IP ist dabei bereits aktiv; die Internetroute wird nur für die Einrichtung per DHCP ergänzt. Nach erfolgreichem Abschluss wird der Init-Boot-Eintrag entfernt. Der spätere Kamerabetrieb ist vollständig ohne Internet möglich.
 
 ## Entwicklung
 

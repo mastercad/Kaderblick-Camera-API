@@ -41,9 +41,8 @@
             <label>IPv4-Adresse<input id="ip" value="192.168.178.47" required inputmode="decimal"></label>
             <label>Netzmaske<input id="netmask" value="255.255.255.0" required inputmode="decimal"></label>
           </div>
-          <label>Gateway <span>(optional)</span><input id="gateway" placeholder="z. B. 192.168.178.2" inputmode="decimal"></label>
-          <p class="hint">Für Kamera, Steuergerät und Hotspot im selben Netz ist kein Gateway erforderlich.</p>
-          <p class="hint">Der erste Start benötigt vorübergehend Internet über Ethernet. Danach läuft die Kamera ohne Internet.</p>
+          <label>Gateway<input id="gateway" placeholder="z. B. 192.168.178.2" inputmode="decimal"></label>
+          <p class="hint">Beim einmaligen ersten Start ergänzt der Raspberry seine statische IP vorübergehend um eine Internetroute per DHCP. Danach gilt ausschließlich die statische Konfiguration.</p>
         </fieldset>
 
         <fieldset>

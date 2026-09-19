@@ -12,7 +12,7 @@ WorkingDirectory=/opt/kaderblick/camera_api/src
 Environment=VIRTUAL_ENV=/opt/kaderblick/camera_api/venv
 Environment=PATH=/opt/kaderblick/camera_api/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 Environment=PYTHONPATH=/opt/kaderblick/camera_api/src
-ExecStart=/opt/kaderblick/camera_api/venv/bin/uvicorn fastapi_app:app --host 0.0.0.0 --port 8000 --workers 1
+ExecStart=/opt/kaderblick/camera_api/venv/bin/uvicorn fastapi_app:app --host 0.0.0.0 --port 8000 --workers 1 --no-access-log
 Restart=always
 RestartSec=5
 TimeoutStopSec=15

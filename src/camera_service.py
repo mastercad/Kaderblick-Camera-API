@@ -18,7 +18,7 @@ from find_usb_audio import find_usb_audio_device
 
 # Logging setup
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='[%(asctime)s] [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
@@ -390,7 +390,10 @@ def handle_commands():
     while True:
         try:
             msg = rep_socket.recv_string()
-            logging.info(f"ZMQ empfangen: {msg}")
+            if msg == "STATUS":
+                logging.debug("ZMQ empfangen: STATUS")
+            else:
+                logging.info(f"ZMQ empfangen: {msg}")
             if msg == "START":
                 with recording_lock:
                     if not streamer.recording:
@@ -613,7 +616,7 @@ def handle_commands():
                         "stream_active": _stream_active.is_set(),
                     }
                 rep_socket.send_string(json.dumps(status))
-                logging.info(f"Antwort gesendet: STATUS {status}")
+                logging.debug(f"Antwort gesendet: STATUS {status}")
             elif msg == "STREAM_START":
                 _start_downscale_stream()
                 rep_socket.send_string("OK")

@@ -1,0 +1,32 @@
+#!/bin/bash
+set -uo pipefail
+
+# Ausschliesslich vor dem Start der Kamera-Dienste ausfuehren. Es gibt bewusst
+# keinen Timer und keinen spaeteren Wiederholungsversuch im Aufnahmebetrieb.
+for _ in $(seq 1 5); do
+  if ip -4 route show default | grep -q '^default ' \
+    && getent ahostsv4 deb.debian.org >/dev/null 2>&1; then
+    python3 <<'PY' && fake-hwclock save 2>/dev/null || true
+import email.utils
+import http.client
+import subprocess
+
+connection = http.client.HTTPConnection("deb.debian.org", 80, timeout=5)
+connection.request("HEAD", "/debian/")
+response = connection.getresponse()
+date_header = response.getheader("Date")
+connection.close()
+if not date_header:
+    raise RuntimeError("Debian-Server lieferte keinen Date-Header")
+timestamp = int(email.utils.parsedate_to_datetime(date_header).timestamp())
+subprocess.run(("date", "--utc", "--set", f"@{timestamp}"), check=True)
+PY
+    break
+  fi
+  sleep 1
+done
+
+# TRIM nur beim Boot vor der Aufnahme statt ueber einen periodischen Timer.
+fstrim --quiet-unsupported / 2>/dev/null || true
+
+exit 0

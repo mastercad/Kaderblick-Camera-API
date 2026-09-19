@@ -1,5 +1,7 @@
 "use strict";
 
+require("./direct-io-compat");
+
 const { promisify } = require("node:util");
 const fs = require("node:fs/promises");
 const { interact } = require("balena-image-fs");
@@ -7,13 +9,48 @@ const { multiWrite, sourceDestination } = require("etcher-sdk");
 
 function prepareCmdline(contents) {
   const tokens = String(contents).trim().split(/\s+/);
-  const managed = ["systemd.run=", "systemd.run_success_action=", "systemd.unit="];
+  const managed = ["systemd.run=", "systemd.run_success_action=", "systemd.run_failure_action=", "systemd.unit="];
   const additions = [
     "systemd.run=/boot/firmware/kaderblick-install.sh",
     "systemd.run_success_action=reboot",
+    "systemd.run_failure_action=none",
     "systemd.unit=kernel-command-line.target"
   ];
   return `${[...tokens.filter((token) => !managed.some((prefix) => token.startsWith(prefix))), ...additions].join(" ")}\n`;
+}
+
+async function ensureDirectory(filesystem, directory, mode = 0o755) {
+  try {
+    const stats = await filesystem.promises.stat(directory);
+    if (!stats.isDirectory()) throw new Error(`${directory} ist kein Verzeichnis.`);
+    return;
+  } catch (error) {
+    if (error.message.endsWith("ist kein Verzeichnis.")) throw error;
+  }
+  await filesystem.promises.mkdir(directory, { mode });
+}
+
+async function replaceSymlink(filesystem, target, linkPath) {
+  let exists = true;
+  try {
+    await filesystem.promises.lstat(linkPath);
+  } catch {
+    exists = false;
+  }
+  if (exists) await filesystem.promises.unlink(linkPath);
+  await filesystem.promises.symlink(target, linkPath);
+}
+
+async function configureRootPartition(disk) {
+  await interact(disk, 2, async (filesystem) => {
+    await ensureDirectory(filesystem, "/etc/systemd/system");
+    await ensureDirectory(filesystem, "/etc/systemd/system/multi-user.target.wants");
+    await replaceSymlink(
+      filesystem,
+      "/lib/systemd/system/NetworkManager.service",
+      "/etc/systemd/system/multi-user.target.wants/NetworkManager.service"
+    );
+  });
 }
 
 function prepareConfig(contents) {
@@ -33,6 +70,7 @@ async function configureBootPartition(disk, configuration, runtimePath, installS
     await writeFile("/cmdline.txt", prepareCmdline((await readFile("/cmdline.txt")).toString("utf8")));
     await writeFile("/config.txt", prepareConfig((await readFile("/config.txt")).toString("utf8")));
   });
+  await configureRootPartition(disk);
 }
 
 async function flashImage({ imagePath, runtimePath, installScriptPath, destination, configuration, onProgress }) {
@@ -52,4 +90,4 @@ async function flashImage({ imagePath, runtimePath, installScriptPath, destinati
   return result;
 }
 
-module.exports = { configureBootPartition, flashImage, prepareCmdline, prepareConfig };
+module.exports = { configureBootPartition, configureRootPartition, flashImage, prepareCmdline, prepareConfig };

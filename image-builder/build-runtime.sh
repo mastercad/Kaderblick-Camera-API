@@ -14,12 +14,16 @@ find "${STAGING_DIRECTORY}/camera-api/src" -type d -name __pycache__ -prune -exe
 find "${STAGING_DIRECTORY}/camera-api/src" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 install -m 0644 "${FILES_DIRECTORY}/requirements-image.txt" "${STAGING_DIRECTORY}/"
 install -m 0644 "${FILES_DIRECTORY}/camera_service.service" \
-  "${FILES_DIRECTORY}/kaderblick_app.service" "${FILES_DIRECTORY}"/*.conf \
+  "${FILES_DIRECTORY}/kaderblick_app.service" \
+  "${FILES_DIRECTORY}/kaderblick-boot-preflight.service" \
+  "${FILES_DIRECTORY}"/*.conf \
   "${FILES_DIRECTORY}"/*.rules "${STAGING_DIRECTORY}/"
 install -m 0755 "${FILES_DIRECTORY}/kaderblick-firstboot.py" \
   "${STAGING_DIRECTORY}/kaderblick-firstboot.py"
 install -m 0755 "${FILES_DIRECTORY}/install-runtime.sh" \
   "${STAGING_DIRECTORY}/install-runtime.sh"
+install -m 0755 "${FILES_DIRECTORY}/kaderblick-boot-preflight" \
+  "${STAGING_DIRECTORY}/kaderblick-boot-preflight"
 
 tar -C "${STAGING_DIRECTORY}" -cJf "${OUTPUT_DIRECTORY}/${RUNTIME_NAME}" .
 (
