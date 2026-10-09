@@ -9,9 +9,6 @@ import struct
 import glob as _glob
 from datetime import datetime
 import subprocess
-import queue
-import cv2
-import numpy as np
 from v4l2_mjpg_stream import V4L2MJPGStreamer
 from find_usb_audio import find_usb_audio_device
 from timestamped_audio import TimestampedAudioRecorder
@@ -50,15 +47,11 @@ ARDUCAM_PRODUCT_ID = 0x0822
 # Flag: verhindert Watchdog-Eingriff während eines laufenden USB-Resets
 _device_reset_in_progress = False
 
-# === Livestream / 1080p-Downscaling ===
-STREAM_WIDTH = 1920
-STREAM_HEIGHT = 1080
-STREAM_FPS = 30
-STREAM_JPEG_QUALITY = 65
-_stream_active = threading.Event()   # gesetzt = Downscaling-Thread läuft
-_preview_queue: queue.Queue = queue.Queue(maxsize=2)
-_stream_thread: threading.Thread | None = None
-_stream_lock = threading.Lock()
+# === Livestream ===
+# Die Kamera liefert bereits MJPEG. Die Vorschau reicht diese komprimierten
+# Originalframes unverändert durch; auf dem Pi wird weder dekodiert noch erneut
+# komprimiert. Das Event dient nur als sichtbarer Betriebszustand für Clients.
+_stream_active = threading.Event()
 
 # Persistenz der Auflösung/FPS über Neustarts hinweg
 RESOLUTION_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "resolution_config.json")
@@ -125,93 +118,31 @@ def _wait_for_video_device(device: str = '/dev/video0', timeout: float = 10.0) -
     logging.error(f"[USB-RESET] {device} nach {timeout}s nicht wieder verfügbar.")
     return False
 
-# Preview-Callback: bei aktivem Livestream → Queue für Downscaling, sonst 4K@3fps
+# Original-MJPEG-Vorschau. Drei Bilder pro Sekunde reichen zur Überwachung und
+# begrenzen gleichzeitig Netzwerk- und Speicherkopierlast.
 PREVIEW_MAX_FPS = 3
 _last_preview_time = 0.0
 
 def preview_callback_mjpg(frame_bytes):
     global _last_preview_time
-    if _stream_active.is_set():
-        # Frame in Queue für Downscaling-Thread; bei vollem Puffer alten Frame verwerfen
-        if _preview_queue.full():
-            try:
-                _preview_queue.get_nowait()
-            except queue.Empty:
-                pass
-        try:
-            _preview_queue.put_nowait(frame_bytes)
-        except queue.Full:
-            pass
-    else:
-        # Fallback: 4K-Frame direkt senden, auf max. 3fps begrenzt
-        now = time.monotonic()
-        if now - _last_preview_time < 1.0 / PREVIEW_MAX_FPS:
-            return
-        _last_preview_time = now
-        try:
-            pub_socket.send(frame_bytes, zmq.NOBLOCK)
-        except Exception as e:
-            logging.error(f"Preview PUB send error: {e}")
+    now = time.monotonic()
+    if now - _last_preview_time < 1.0 / PREVIEW_MAX_FPS:
+        return
+    _last_preview_time = now
+    try:
+        pub_socket.send(frame_bytes, zmq.NOBLOCK)
+    except Exception as e:
+        logging.error(f"Preview PUB send error: {e}")
 
 
-def _downscale_worker():
-    """Low-priority Thread: dekodiert 4K-MJPEG, skaliert auf 1080p, sendet via ZMQ PUB."""
-    os.nice(10)
-    logging.info("[STREAM] Downscaling-Thread gestartet (1080p @ 30fps).")
-    min_interval = 1.0 / STREAM_FPS
-    last_send = 0.0
-    while _stream_active.is_set():
-        try:
-            frame_bytes = _preview_queue.get(timeout=0.1)
-        except queue.Empty:
-            continue
-        now = time.monotonic()
-        if now - last_send < min_interval:
-            continue
-        try:
-            arr = np.frombuffer(frame_bytes, dtype=np.uint8)
-            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-            if img is None:
-                continue
-            small = cv2.resize(img, (STREAM_WIDTH, STREAM_HEIGHT), interpolation=cv2.INTER_LINEAR)
-            ok, buf = cv2.imencode('.jpg', small, [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY])
-            if not ok:
-                continue
-            pub_socket.send(buf.tobytes(), zmq.NOBLOCK)
-            last_send = time.monotonic()
-        except Exception as e:
-            logging.debug(f"[STREAM] Downscale-Fehler: {e}")
-    logging.info("[STREAM] Downscaling-Thread beendet.")
+def _start_raw_stream():
+    _stream_active.set()
+    logging.info("[STREAM] Original-MJPEG-Livestream aktiviert (kein Downscaling).")
 
 
-def _start_downscale_stream():
-    global _stream_thread
-    with _stream_lock:
-        if _stream_active.is_set():
-            logging.info("[STREAM] Downscaling läuft bereits.")
-            return
-        while not _preview_queue.empty():
-            try:
-                _preview_queue.get_nowait()
-            except queue.Empty:
-                break
-        _stream_active.set()
-        _stream_thread = threading.Thread(target=_downscale_worker, daemon=True, name="downscale-stream")
-        _stream_thread.start()
-    logging.info("[STREAM] Downscaling-Thread gestartet.")
-
-
-def _stop_downscale_stream():
-    global _stream_thread
-    with _stream_lock:
-        if not _stream_active.is_set():
-            logging.info("[STREAM] Kein aktiver Stream – nichts zu stoppen.")
-            return
-        _stream_active.clear()
-    if _stream_thread and _stream_thread.is_alive():
-        _stream_thread.join(timeout=2.0)
-    _stream_thread = None
-    logging.info("[STREAM] Downscaling-Thread gestoppt.")
+def _stop_raw_stream():
+    _stream_active.clear()
+    logging.info("[STREAM] Original-MJPEG-Livestream deaktiviert.")
 
 
 # Streamer-Objekt initialisieren (letzte Auflösung/FPS aus Config wiederherstellen)
@@ -647,12 +578,12 @@ def handle_commands():
                 rep_socket.send_string(json.dumps(status))
                 logging.debug(f"Antwort gesendet: STATUS {status}")
             elif msg == "STREAM_START":
-                _start_downscale_stream()
+                _start_raw_stream()
                 rep_socket.send_string("OK")
                 logging.info("Antwort gesendet: OK (STREAM_START)")
 
             elif msg == "STREAM_STOP":
-                _stop_downscale_stream()
+                _stop_raw_stream()
                 rep_socket.send_string("OK")
                 logging.info("Antwort gesendet: OK (STREAM_STOP)")
 

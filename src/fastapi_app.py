@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import psutil
 import zmq
 from fastapi import FastAPI, HTTPException
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 
 import hardware
 import stream as _stream
@@ -63,6 +63,7 @@ def root():
         "endpoints": {
             "GET /": "This info",
             "GET /preview": "Stream live MJPEG preview from camera service",
+            "GET /snapshot": "Return the latest original MJPEG frame",
             "POST /start_record": "Start recording video",
             "POST /stop_record": "Stop recording video",
             "POST /servo": "Move servo relative (degrees +/-)",
@@ -170,19 +171,49 @@ def preview():
             while not stop_event.is_set():
                 new_frame_event.wait(timeout=0.5)
                 new_frame_event.clear()
-                frame = _stream.latest_frame
+                frame, sequence, received_ns = _stream.get_latest_frame()
                 if frame is not None and frame is not last_sent:
                     last_sent = frame
                     yield (
                         b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        + f"Content-Length: {len(frame)}\r\n".encode("ascii")
+                        + f"X-Frame-Sequence: {sequence}\r\n".encode("ascii")
+                        + f"X-Frame-Monotonic-Ns: {received_ns}\r\n\r\n".encode("ascii")
                         + frame
                         + b"\r\n"
                     )
         except GeneratorExit:
             pass
 
-    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
+    return StreamingResponse(
+        generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/snapshot")
+def snapshot():
+    """Liefert das neueste bereits komprimierte Kamera-JPEG unverändert aus."""
+    frame, sequence, received_ns = _stream.get_latest_frame()
+    if frame is None:
+        raise HTTPException(status_code=503, detail="Noch kein Kamerabild verfügbar")
+    return Response(
+        content=frame,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Content-Length": str(len(frame)),
+            "X-Frame-Sequence": str(sequence),
+            "X-Frame-Monotonic-Ns": str(received_ns),
+        },
+    )
 
 
 # ==============================

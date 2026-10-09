@@ -109,7 +109,10 @@ uvicorn fastapi_app:app --host 0.0.0.0 --port 8000
 
 | Methode | Endpunkt | Beschreibung |
 |---------|----------|--------------|
-| `GET` | `/preview` | MJPEG Live-Stream |
+| `GET` | `/snapshot` | Neuestes Original-JPEG, ohne Dekodierung auf dem Pi |
+| `GET` | `/preview` | Begrenzter Original-MJPEG-Livestream, ohne Downscaling |
+| `POST` | `/stream/start` | Livestream-Betriebszustand aktivieren |
+| `POST` | `/stream/stop` | Livestream-Betriebszustand deaktivieren |
 | `POST` | `/start_record` | Aufnahme starten |
 | `POST` | `/stop_record` | Aufnahme stoppen |
 | `GET` | `/status` | Vollständiger Status (Aufnahme, Stream, Hardware) |
@@ -194,12 +197,21 @@ FastAPI generiert automatisch interaktive Dokumentation:
    curl -X POST http://192.168.178.47:8000/start_record
    ```
 
-2. **Live-Stream ansehen:**
+2. **Aktuelles Einzelbild abrufen:**
+   ```
+   http://192.168.178.47:8000/snapshot
+   ```
+
+3. **Live-Stream ansehen:**
    ```
    http://192.168.178.47:8000/preview
    ```
 
-3. **Kamera ausrichten während Aufnahme:**
+   Beide Endpunkte reichen die von der Kamera bereits komprimierten 4K-JPEGs
+   unverändert durch. Auf dem Raspberry Pi findet keine Bilddekodierung oder
+   erneute Komprimierung statt.
+
+4. **Kamera ausrichten während Aufnahme:**
    ```bash
    # Servo bewegen (Y-Achse)
    curl -X POST http://192.168.178.47:8000/servo/absolute \
@@ -210,14 +222,14 @@ FastAPI generiert automatisch interaktive Dokumentation:
      -H "Content-Type: application/json" -d '{"steps": 100}'
    ```
 
-4. **Bildqualität anpassen während Aufnahme:**
+5. **Bildqualität anpassen während Aufnahme:**
    ```bash
    curl -X POST http://192.168.178.47:8000/camera/controls \
      -H "Content-Type: application/json" \
      -d '{"control": "sharpness", "value": 5}'
    ```
 
-5. **Aufnahme stoppen:**
+6. **Aufnahme stoppen:**
    ```bash
    curl -X POST http://192.168.178.47:8000/stop_record
    ```

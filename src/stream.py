@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 from threading import Lock
 
 import zmq
@@ -25,6 +26,9 @@ _sub_socket.RCVTIMEO = 100  # ms – damit recv() nicht ewig blockiert
 # Geteilter Zustand
 # ==============================
 latest_frame: bytes | None = None
+latest_frame_sequence = 0
+latest_frame_received_monotonic_ns = 0
+latest_frame_lock = Lock()
 new_frame_event = threading.Event()   # signalisiert sofort, wenn ein neues Frame anliegt
 stop_event = threading.Event()
 disk_space_error = threading.Event()   # gesetzt, wenn Speicherplatz-Limit unterschritten
@@ -36,14 +40,23 @@ disk_space_error = threading.Event()   # gesetzt, wenn Speicherplatz-Limit unter
 
 def _frame_listener() -> None:
     """Empfängt MJPEG-Frames vom ZMQ-SUB-Socket und legt sie in latest_frame ab."""
-    global latest_frame
+    global latest_frame, latest_frame_sequence, latest_frame_received_monotonic_ns
     while not stop_event.is_set():
         try:
             frame = _sub_socket.recv()
-            latest_frame = frame
+            with latest_frame_lock:
+                latest_frame = frame
+                latest_frame_sequence += 1
+                latest_frame_received_monotonic_ns = time.monotonic_ns()
             new_frame_event.set()
         except zmq.Again:
             pass  # RCVTIMEO abgelaufen – kein Frame, einfach weiter
+
+
+def get_latest_frame() -> tuple[bytes | None, int, int]:
+    """Liefert Frame, lokale Sequenz und Empfangszeit als konsistenten Snapshot."""
+    with latest_frame_lock:
+        return latest_frame, latest_frame_sequence, latest_frame_received_monotonic_ns
 
 
 def _disk_space_monitor() -> None:

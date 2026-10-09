@@ -109,6 +109,22 @@ class TestPreviewCallback:
         # darf keinen Absturz verursachen
         cs.preview_callback_mjpg(b"\xff\xd8\xff")
 
+    def test_stream_mode_never_decodes_or_transforms_frame(self):
+        zmq_mock, rep, pub, ctx = _make_zmq_mock()
+        streamer = _make_streamer_mock()
+        cs = _load_camera_service(zmq_mock, streamer)
+        frame = b"\xff\xd8original-mjpeg-frame\xff\xd9"
+
+        cs._start_raw_stream()
+        cs._last_preview_time = 0.0
+        cs.preview_callback_mjpg(frame)
+
+        pub.send.assert_called_once_with(frame, zmq_mock.NOBLOCK)
+        assert cs._stream_active.is_set()
+
+        cs._stop_raw_stream()
+        assert not cs._stream_active.is_set()
+
 
 # ===========================================================================
 # handle_commands – START

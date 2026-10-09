@@ -113,6 +113,33 @@ class TestRoot:
         assert r.json()["hardware"]["stepper"]["pins"] == [17, 27, 20, 21]
 
 
+class TestSnapshot:
+    def test_returns_latest_original_jpeg_without_transformation(self):
+        jpeg = b"\xff\xd8original-mjpeg-frame\xff\xd9"
+        with patch.object(
+            fastapi_app._stream,
+            "get_latest_frame",
+            return_value=(jpeg, 42, 123456789),
+        ):
+            r = client.get("/snapshot")
+
+        assert r.status_code == 200
+        assert r.content == jpeg
+        assert r.headers["content-type"] == "image/jpeg"
+        assert r.headers["content-length"] == str(len(jpeg))
+        assert r.headers["x-frame-sequence"] == "42"
+        assert r.headers["cache-control"].startswith("no-store")
+
+    def test_returns_503_before_first_frame(self):
+        with patch.object(
+            fastapi_app._stream,
+            "get_latest_frame",
+            return_value=(None, 0, 0),
+        ):
+            r = client.get("/snapshot")
+
+        assert r.status_code == 503
+
 # ===========================================================================
 # POST /start_record
 # ===========================================================================
