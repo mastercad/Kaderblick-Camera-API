@@ -20,8 +20,9 @@ jobs:
 
       - name: Laufzeitpaket validieren
         run: |
-          sha256sum --check kaderblick-camera-runtime-bookworm-arm64.tar.xz.sha256
-          tar -tJf kaderblick-camera-runtime-bookworm-arm64.tar.xz | grep -qx './install-runtime.sh'
+          sha256sum --check kaderblick-camera-runtime-trixie-arm64.tar.xz.sha256
+          tar -tJf kaderblick-camera-runtime-trixie-arm64.tar.xz | grep -qx './install-runtime.sh'
+          tar -tJf kaderblick-camera-runtime-trixie-arm64.tar.xz | grep -qx './camera-api/src/timestamped_audio.py'
           test -z "$(find . -maxdepth 1 -type f -name '*.img*' -print -quit)"
 
       - name: Laufzeit-Artefakt hochladen
@@ -29,6 +30,6 @@ jobs:
         with:
           name: camera-runtime
           path: |
-            kaderblick-camera-runtime-bookworm-arm64.tar.xz
-            kaderblick-camera-runtime-bookworm-arm64.tar.xz.sha256
+            kaderblick-camera-runtime-trixie-arm64.tar.xz
+            kaderblick-camera-runtime-trixie-arm64.tar.xz.sha256
           if-no-files-found: error

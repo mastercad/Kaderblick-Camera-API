@@ -7,7 +7,9 @@ const path = require("node:path");
 const { pipeline } = require("node:stream/promises");
 const { Readable, Transform } = require("node:stream");
 
-const OFFICIAL_IMAGE_URL = "https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz";
+// Bewusst auf denselben Raspberry-Pi-OS-/Kernel-Stand wie die stabil laufende
+// Kamera 1 festgelegt. Ein neueres Image wird erst nach einem Kameratest gepinnt.
+const OFFICIAL_IMAGE_URL = "https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-04-21/2026-04-21-raspios-trixie-arm64-lite.img.xz";
 const OFFICIAL_CHECKSUM_URL = `${OFFICIAL_IMAGE_URL}.sha256`;
 
 async function checkedFetch(url) {

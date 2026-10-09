@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+from contextlib import asynccontextmanager
 
 import psutil
 import zmq
@@ -39,7 +40,15 @@ from stream import disk_space_error, new_frame_event, req_lock, req_socket, stop
 # Einmaliger Warmup – cpu_percent(interval=None) liefert sonst 0.0 beim ersten Aufruf
 psutil.cpu_percent(interval=None)
 
-app = FastAPI(title="Kaderblick API", version="1.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    try:
+        yield
+    finally:
+        _stream.shutdown()
+
+
+app = FastAPI(title="Kaderblick API", version="1.0", lifespan=lifespan)
 
 
 # ==============================
@@ -447,6 +456,16 @@ def get_status():
                     "capture_thread_alive": camera_status.get("capture_thread_alive"),
                     "frames_captured": camera_status.get("frames_captured"),
                     "frames_written": camera_status.get("frames_written"),
+                    "v4l2_sequence_gaps": camera_status.get("v4l2_sequence_gaps"),
+                    "v4l2_sequence_frames_lost": camera_status.get("v4l2_sequence_frames_lost"),
+                    "v4l2_timestamp_gaps": camera_status.get("v4l2_timestamp_gaps"),
+                    "v4l2_buffer_errors": camera_status.get("v4l2_buffer_errors"),
+                    "v4l2_allocated_buffers": camera_status.get("v4l2_allocated_buffers"),
+                    "max_buffer_hold_ms": camera_status.get("max_buffer_hold_ms"),
+                    "max_write_ms": camera_status.get("max_write_ms"),
+                    "writer_queue_max_depth": camera_status.get("writer_queue_max_depth"),
+                    "writer_queue_drops": camera_status.get("writer_queue_drops"),
+                    "writer_error": camera_status.get("writer_error"),
                     "last_frame_age_s": camera_status.get("last_frame_age_s"),
                     "capture_error": camera_status.get("capture_error"),
                     "audio_exit_code": camera_status.get("audio_exit_code"),
@@ -574,6 +593,9 @@ def system_info():
 def system_shutdown():
     try:
         subprocess.Popen(["sudo", "shutdown", "-h", "now"])
+        # Offene MJPEG-Streams sofort beenden. Andernfalls wartet Uvicorn bis
+        # zum systemd-Stop-Timeout auf die endlose StreamingResponse.
+        _stream.request_shutdown()
         return JSONResponse({"status": "shutdown initiated"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -583,6 +605,7 @@ def system_shutdown():
 def system_reboot():
     try:
         subprocess.Popen(["sudo", "reboot"])
+        _stream.request_shutdown()
         return JSONResponse({"status": "reboot initiated"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

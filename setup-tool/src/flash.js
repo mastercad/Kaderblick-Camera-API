@@ -64,7 +64,7 @@ async function configureBootPartition(disk, configuration, runtimePath, installS
     const writeFile = promisify(filesystem.writeFile.bind(filesystem));
     const readFile = promisify(filesystem.readFile.bind(filesystem));
     await writeFile("/kaderblick-config.json", `${JSON.stringify(configuration, null, 2)}\n`);
-    await writeFile("/kaderblick-runtime-bookworm-arm64.tar.xz", await fs.readFile(runtimePath));
+    await writeFile("/kaderblick-runtime-trixie-arm64.tar.xz", await fs.readFile(runtimePath));
     await writeFile("/kaderblick-install.sh", await fs.readFile(installScriptPath));
 
     await writeFile("/cmdline.txt", prepareCmdline((await readFile("/cmdline.txt")).toString("utf8")));

@@ -1,6 +1,6 @@
 {
   "name": "kaderblick-camera-setup",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Schreibt und konfiguriert einen einsatzfertigen Kaderblick-Kamera-Datenträger.",
   "main": "src/main.js",
   "author": "Kaderblick",
@@ -10,9 +10,12 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.js",
-    "lint": "eslint src test",
-    "dist": "electron-builder --publish never",
-    "dist:publish": "electron-builder --publish always"
+    "lint": "eslint src test scripts",
+    "runtime:build": "node scripts/runtime.js build",
+    "runtime:verify": "node scripts/runtime.js verify",
+    "dist": "npm run runtime:build && electron-builder --publish never",
+    "dist:prebuilt": "npm run runtime:verify && electron-builder --publish never",
+    "dist:publish": "npm run runtime:build && electron-builder --publish always"
   },
   "dependencies": {
     "balena-image-fs": "7.6.21",
@@ -50,8 +53,8 @@
         "to": "assets/install-runtime.sh"
       },
       {
-        "from": "runtime/kaderblick-camera-runtime-bookworm-arm64.tar.xz",
-        "to": "assets/kaderblick-camera-runtime-bookworm-arm64.tar.xz"
+        "from": "runtime/kaderblick-camera-runtime-trixie-arm64.tar.xz",
+        "to": "assets/kaderblick-camera-runtime-trixie-arm64.tar.xz"
       }
     ],
     "artifactName": "Kaderblick-Kamera-Setup-${version}-${os}-${arch}.${ext}",

@@ -13,6 +13,13 @@ npm test
 npm start
 ```
 
+`npm run dist` baut vor jedem lokalen Desktop-Paket zwingend eine neue
+Camera-Runtime aus dem aktuellen `src`-Verzeichnis. Ein bereits vorhandenes
+Runtime-Archiv wird dabei ersetzt und kann deshalb nicht versehentlich als
+veralteter Kamerastand erneut gebuendelt werden. Der Release-Workflow verwendet
+das unmittelbar zuvor in GitHub Actions erzeugte und per SHA-256 verifizierte
+Runtime-Artefakt.
+
 Das Schreiben eines Blockgeräts benötigt Administratorrechte. Für Entwicklungstests können mit `KADERBLICK_IMAGE=/pfad/zum/image.img.xz` und `KADERBLICK_RUNTIME=/pfad/zum/runtime.tar.xz` lokale Dateien statt der Downloads verwendet werden.
 
 ## Netzwerk

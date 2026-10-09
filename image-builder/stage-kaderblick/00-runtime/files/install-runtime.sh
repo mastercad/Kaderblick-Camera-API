@@ -2,7 +2,7 @@
 set -euo pipefail
 
 BOOT=/boot/firmware
-PAYLOAD_ARCHIVE="${BOOT}/kaderblick-runtime-bookworm-arm64.tar.xz"
+PAYLOAD_ARCHIVE="${BOOT}/kaderblick-runtime-trixie-arm64.tar.xz"
 WORK=/run/kaderblick-install
 
 test -s "${PAYLOAD_ARCHIVE}"

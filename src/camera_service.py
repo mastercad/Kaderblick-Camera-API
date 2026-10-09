@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 from v4l2_mjpg_stream import V4L2MJPGStreamer
 from find_usb_audio import find_usb_audio_device
+from timestamped_audio import TimestampedAudioRecorder
 
 
 # Logging setup
@@ -234,8 +235,8 @@ except Exception as e:
 # Thread-sicheres Flag für Aufnahme
 recording_lock = threading.Lock()
 
-audio_proc = None           # Für parallele Audioaufnahme
-audio_error_msg = None      # Fehlermeldung wenn arecord abstirbt
+audio_proc = None           # TimestampedAudioRecorder der parallelen Audioaufnahme
+audio_error_msg = None      # Fehlermeldung wenn die Audioaufnahme abstirbt
 current_video_filename = None
 current_audio_filename = None
 current_meta_filename = None
@@ -373,15 +374,18 @@ def capture_watchdog():
 
 
 def audio_monitor():
-    """Überwacht den arecord-Prozess und loggt Fehler wenn er vorzeitig endet."""
+    """Überwacht den Audiorecorder und loggt Fehler wenn er vorzeitig endet."""
     global audio_proc, audio_error_msg
     while True:
         time.sleep(2)
         if audio_proc is not None:
             rc = audio_proc.poll()
-            if rc is not None:
+            if rc is not None and not getattr(audio_proc, "stop_requested", False):
                 if audio_error_msg is None:  # Nur einmal loggen
-                    audio_error_msg = f"arecord unerwartet beendet (Exit-Code {rc})"
+                    detail = getattr(audio_proc, "error", None)
+                    audio_error_msg = f"Audioaufnahme unerwartet beendet (Exit-Code {rc})"
+                    if detail:
+                        audio_error_msg += f": {detail}"
                     logging.error(f"[AUDIO MONITOR] {audio_error_msg}")
 
 
@@ -412,7 +416,7 @@ def handle_commands():
                         try:
                             import signal
                             import psutil
-                            # arecord-Prozesse killen
+                            # Verwaiste arecord-Prozesse älterer Versionen killen
                             for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                                 if 'arecord' in proc.info['name'] or (proc.info['cmdline'] and any('arecord' in c for c in proc.info['cmdline'])):
                                     try:
@@ -457,15 +461,20 @@ def handle_commands():
                         audio_device = find_usb_audio_device("Huawei Technologies Co., Ltd. EarPods")
                         if audio_device:
                             logging.info(f"Starte Audioaufnahme von {audio_device}")
-                            audio_proc = subprocess.Popen([
-                                "arecord", "-D", audio_device, "-f", "cd", "-t", "wav", "-r", "48000", "-c", "1", audio_filename
-                            ])
-                            # Kurz warten damit arecord wirklich aufzeichnet bevor Video startet
-                            time.sleep(0.2)
-                            # Prüfen ob arecord sofort gecrasht ist
-                            if audio_proc.poll() is not None:
-                                audio_error_msg = f"arecord sofort beendet (Exit-Code {audio_proc.poll()})"
+                            try:
+                                audio_proc = TimestampedAudioRecorder(
+                                    audio_device,
+                                    audio_filename,
+                                ).start()
+                            except Exception as e:
+                                audio_error_msg = f"Audioaufnahme konnte nicht starten: {e}"
                                 logging.error(f"[START] {audio_error_msg}")
+                                audio_proc = None
+                            if audio_proc is not None and not audio_proc.wait_for_first_timestamp(2.0):
+                                audio_error_msg = "Kein ALSA-Zeitstempel innerhalb von 2 Sekunden"
+                                logging.error(f"[START] {audio_error_msg}")
+                                audio_proc.terminate()
+                                audio_proc.wait(timeout=2)
                                 audio_proc = None
                         else:
                             logging.error("USB-Audio-Device nicht gefunden! Keine Audioaufnahme.")
@@ -498,7 +507,13 @@ def handle_commands():
                             audio_proc.terminate()
                             try:
                                 audio_proc.wait(timeout=2)
-                                logging.info("Audioaufnahme gestoppt.")
+                                logging.info(
+                                    "Audioaufnahme gestoppt "
+                                    f"(frames={audio_proc.frames_written}, "
+                                    f"timestamps={audio_proc.timestamp_records}, "
+                                    f"xruns={audio_proc.xrun_count}, "
+                                    f"clipped_samples={audio_proc.clipped_samples})."
+                                )
                             except Exception:
                                 logging.warning("Audioaufnahme konnte nicht sauber beendet werden.")
                         audio_proc = None
@@ -604,6 +619,20 @@ def handle_commands():
                         "capture_thread_alive": capture_thread_alive,
                         "frames_captured": frames_captured,
                         "frames_written": frames_written,
+                        "v4l2_sequence_gaps": int(getattr(streamer, "sequence_gaps", 0)),
+                        "v4l2_sequence_frames_lost": int(getattr(streamer, "sequence_frames_lost", 0)),
+                        "v4l2_timestamp_gaps": int(getattr(streamer, "timestamp_gaps", 0)),
+                        "v4l2_buffer_errors": int(getattr(streamer, "buffer_errors", 0)),
+                        "v4l2_allocated_buffers": int(getattr(streamer, "allocated_buffers", 0)),
+                        "max_buffer_hold_ms": round(float(getattr(streamer, "max_buffer_hold_ms", 0.0)), 3),
+                        "max_write_ms": round(float(getattr(streamer, "max_write_ms", 0.0)), 3),
+                        "writer_queue_max_depth": int(getattr(streamer, "writer_queue_max_depth", 0)),
+                        "writer_queue_drops": int(getattr(streamer, "writer_queue_drops", 0)),
+                        "writer_error": (
+                            streamer.writer_error
+                            if isinstance(getattr(streamer, "writer_error", None), str)
+                            else None
+                        ),
                         "last_frame_age_s": last_frame_age,
                         "capture_error": capture_error,
                         "audio_available": audio_running,

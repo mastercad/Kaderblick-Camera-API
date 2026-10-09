@@ -17,6 +17,7 @@ jobs:
           - tests/test_camera_service.py
           - tests/test_fastapi.py
           - tests/test_find_usb_audio.py
+          - tests/test_timestamped_audio.py
           - tests/test_v4l2_streamer.py
     runs-on: ubuntu-24.04
     steps:

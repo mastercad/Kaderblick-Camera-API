@@ -7,17 +7,32 @@ import select
 import ctypes
 import time
 import json
+import queue
+import struct
 import numpy as np
 import cv2
 
+
+_WRITER_STOP = object()
+_V4L2_BUF_FLAG_ERROR = 0x0040
+_FRAME_METADATA_MAGIC = b"KBFM"
+_FRAME_METADATA_VERSION = 1
+# magic, version, flags, header size, frame index, V4L2 sequence,
+# V4L2 timestamp ns, userspace receive monotonic ns, V4L2 buffer flags
+_FRAME_METADATA_STRUCT = struct.Struct(">4sBBHQIQQI")
+
+
 class V4L2MJPGStreamer:
-    def __init__(self, device='/dev/video0', width=3840, height=2160, fps=30, buffers=4):
+    def __init__(self, device='/dev/video0', width=3840, height=2160, fps=30, buffers=12,
+                 writer_queue_size=128):
         self.device = device
         self.width = width
         self.height = height
         self.fps = fps
         self.camera_fps = fps  # tatsächliche Kamera-fps (kann > self.fps sein bei Frame-Dropping)
         self.buffers = buffers
+        self.allocated_buffers = 0
+        self.writer_queue_size = writer_queue_size
         self.fd = None
         self.mmaps = []
         self.running = False
@@ -27,15 +42,29 @@ class V4L2MJPGStreamer:
         self.thread = None
         self.avi_writer = None
         self.avi_lock = threading.Lock()
+        self._recording_state_lock = threading.Lock()
+        self._writer_queue = None
+        self._writer_thread = None
+        self._next_frame_index = 0
         # Health tracking
         self.frames_captured = 0       # Frames vom Kamera-Gerät empfangen
         self.frames_written = 0        # Frames in Datei geschrieben
         self.last_frame_time = None    # Zeitpunkt (monotonic) des letzten Frames
         self.capture_error = None      # Fehlermeldung wenn Capture-Loop abstürzt
         self.recording_start_time = None  # Zeitpunkt des Aufnahme-Starts
-        # A/V-Sync: letzter geschriebener Frame (Kernel-Timestamp + Bytes für Duplikation)
-        self._last_written_frame_ts = None
-        self._prev_frame_bytes = None
+        # V4L2 diagnostics: distinguish device/USB loss from userspace stalls.
+        self.last_sequence = None
+        self.sequence_gaps = 0
+        self.sequence_frames_lost = 0
+        self.timestamp_gaps = 0
+        self.buffer_errors = 0
+        self.max_buffer_hold_ms = 0.0
+        self.max_write_ms = 0.0
+        self.writer_queue_max_depth = 0
+        self.writer_queue_drops = 0
+        self.writer_error = None
+        self._last_capture_ts = None
+        self._last_buffer_hold_ms = 0.0
 
     def open(self):
         self.fd = os.open(self.device, os.O_RDWR | os.O_NONBLOCK)
@@ -57,8 +86,13 @@ class V4L2MJPGStreamer:
         req.type = v4l2.V4L2_BUF_TYPE_VIDEO_CAPTURE
         req.memory = v4l2.V4L2_MEMORY_MMAP
         fcntl.ioctl(self.fd, v4l2.VIDIOC_REQBUFS, req)
+        self.allocated_buffers = int(req.count)
+        if self.allocated_buffers < 2:
+            raise RuntimeError(
+                f"V4L2 stellt nur {self.allocated_buffers} Capture-Puffer bereit"
+            )
         self.mmaps = []
-        for i in range(self.buffers):
+        for i in range(self.allocated_buffers):
             buf = v4l2.v4l2_buffer()
             buf.type = v4l2.V4L2_BUF_TYPE_VIDEO_CAPTURE
             buf.memory = v4l2.V4L2_MEMORY_MMAP
@@ -79,6 +113,8 @@ class V4L2MJPGStreamer:
         self.thread.start()
 
     def stop(self):
+        if self._writer_thread is not None or self.record_file is not None or self.avi_writer is not None:
+            self.stop_recording()
         self.running = False
         if self.thread:
             self.thread.join()
@@ -102,6 +138,7 @@ class V4L2MJPGStreamer:
                 pass
             os.close(self.fd)
             self.fd = None
+            self.allocated_buffers = 0
 
     def is_capture_healthy(self, max_frame_age_s=5.0):
         """Gibt True zurück, wenn der Capture-Thread läuft und kürzlich Frames liefert."""
@@ -114,24 +151,54 @@ class V4L2MJPGStreamer:
 
     def _inject_com_marker(self, frame: bytes, fps: int, started_at: str) -> bytes:
         """Injiziert einen JPEG-COM-Marker (FF FE) mit fps und started_at nach dem SOI (FF D8)."""
+        return frame[:2] + self._build_com_segment(fps, started_at) + frame[2:]
+
+    def _build_com_segment(self, fps: int, started_at: str) -> bytes:
         comment = json.dumps({"fps": fps, "started_at": started_at}).encode('utf-8')
         length = len(comment) + 2  # Längenfeld selbst (2 Bytes) + Nutzdaten
-        com_segment = b'\xff\xfe' + length.to_bytes(2, 'big') + comment
-        return frame[:2] + com_segment + frame[2:]
+        return b'\xff\xfe' + length.to_bytes(2, 'big') + comment
+
+    def _build_frame_metadata_segment(self, frame_index, sequence, timestamp_ns,
+                                      receive_monotonic_ns, buffer_flags):
+        """Erzeugt den privaten APP15-Metadatenmarker eines JPEG-Frames."""
+        payload = _FRAME_METADATA_STRUCT.pack(
+            _FRAME_METADATA_MAGIC,
+            _FRAME_METADATA_VERSION,
+            0,  # reservierte Metadaten-Flags; Rohframes sind nie synthetisch
+            _FRAME_METADATA_STRUCT.size,
+            frame_index,
+            sequence,
+            timestamp_ns,
+            receive_monotonic_ns,
+            buffer_flags,
+        )
+        return b'\xff\xef' + (len(payload) + 2).to_bytes(2, 'big') + payload
 
     def start_recording(self, filename, started_at=None):
+        if self._writer_thread is not None:
+            if self._writer_thread.is_alive():
+                raise RuntimeError("Eine Aufnahme ist bereits aktiv oder wird noch beendet")
+            # Nach einem Writer-Fehler verbliebene Datei-/Container-Ressourcen aufräumen.
+            self.stop_recording()
         # Health-Counter zurücksetzen
         self.frames_written = 0
         self.capture_error = None
+        self.sequence_gaps = 0
+        self.sequence_frames_lost = 0
+        self.timestamp_gaps = 0
+        self.buffer_errors = 0
+        self.max_buffer_hold_ms = 0.0
+        self.max_write_ms = 0.0
+        self.writer_queue_max_depth = 0
+        self.writer_queue_drops = 0
+        self.writer_error = None
         self.recording_start_time = time.monotonic()
         self._recording_started_at = started_at or ''
         self._first_frame = True
         # Frame-Dropping: jeden N-ten Frame schreiben um Ziel-fps zu erreichen
         self._record_skip = max(1, round(self.camera_fps / self.fps)) if self.fps > 0 else 1
         self._record_counter = 0
-        # A/V-Sync: Zustand zurücksetzen
-        self._last_written_frame_ts = None
-        self._prev_frame_bytes = None
+        self._next_frame_index = 0
         # AVI-Container, wenn .avi gewünscht
         if filename.lower().endswith('.avi'):
             import cv2
@@ -142,13 +209,39 @@ class V4L2MJPGStreamer:
                 )
             self.record_file = None
         else:
-            self.record_file = open(filename, 'wb')
+            # Ungepuffert: Die dedizierte Queue ist der einzige und kontrollierte Puffer.
+            self.record_file = open(filename, 'wb', buffering=0)
             with self.avi_lock:
                 self.avi_writer = None
-        self.recording = True
+        self._writer_queue = queue.Queue(maxsize=self.writer_queue_size)
+        self._writer_thread = threading.Thread(
+            target=self._writer_loop,
+            name="v4l2-record-writer",
+            daemon=True,
+        )
+        self._writer_thread.start()
+        with self._recording_state_lock:
+            self.recording = True
 
     def stop_recording(self):
-        self.recording = False
+        with self._recording_state_lock:
+            self.recording = False
+            writer_queue = self._writer_queue
+            writer_thread = self._writer_thread
+
+        # Das Stop-Sentinel steht hinter allen bereits angenommenen Frames. Der Writer
+        # schreibt die Queue vollständig leer, bevor Datei/Container geschlossen werden.
+        if writer_queue is not None and writer_thread is not None:
+            sentinel_queued = False
+            while writer_thread.is_alive() and not sentinel_queued:
+                try:
+                    writer_queue.put(_WRITER_STOP, timeout=0.2)
+                    sentinel_queued = True
+                except queue.Full:
+                    pass
+            if sentinel_queued:
+                writer_thread.join()
+
         if self.record_file:
             self.record_file.close()
             self.record_file = None
@@ -159,6 +252,129 @@ class V4L2MJPGStreamer:
                 except Exception as e:
                     print(f"AVI writer release error: {e}")
                 self.avi_writer = None
+        self._writer_thread = None
+        self._writer_queue = None
+        print(
+            f"[V4L2-DIAG] Aufnahme-Zusammenfassung: "
+            f"sequence_gaps={self.sequence_gaps}, "
+            f"sequence_frames_lost={self.sequence_frames_lost}, "
+            f"timestamp_gaps={self.timestamp_gaps}, "
+            f"buffer_errors={self.buffer_errors}, "
+            f"allocated_buffers={self.allocated_buffers}, "
+            f"max_buffer_hold_ms={self.max_buffer_hold_ms:.3f}, "
+            f"max_write_ms={self.max_write_ms:.3f}, "
+            f"writer_queue_max_depth={self.writer_queue_max_depth}, "
+            f"writer_queue_drops={self.writer_queue_drops}, "
+            f"writer_error={self.writer_error!r}",
+            flush=True,
+        )
+
+    def _writer_loop(self):
+        """Schreibt Frames außerhalb des zeitkritischen V4L2-Capture-Threads."""
+        writer_queue = self._writer_queue
+        if writer_queue is None:
+            return
+        try:
+            while True:
+                item = writer_queue.get()
+                try:
+                    if item is _WRITER_STOP:
+                        return
+                    frame, metadata = item
+                    self._write_record_frame(frame, metadata)
+                finally:
+                    writer_queue.task_done()
+        except Exception as e:
+            msg = f"Schreibfehler in Aufnahmedatei: {e}"
+            print(f"[WRITER ERROR] {msg}", flush=True)
+            self.writer_error = msg
+            self.capture_error = msg
+            with self._recording_state_lock:
+                self.recording = False
+
+    @staticmethod
+    def _writev_all(fd, chunks):
+        """Schreibt alle Buffer vollständig, auch wenn ``writev`` nur teilweise schreibt."""
+        pending = [memoryview(chunk) for chunk in chunks if len(chunk)]
+        while pending:
+            written = os.writev(fd, pending)
+            if written <= 0:
+                raise OSError("writev hat keine Daten geschrieben")
+            while pending and written >= len(pending[0]):
+                written -= len(pending[0])
+                pending.pop(0)
+            if pending and written:
+                pending[0] = pending[0][written:]
+
+    def _write_record_frame(self, frame, metadata):
+        write_started_at = time.monotonic()
+        try:
+            if self.record_file is not None:
+                frame_view = memoryview(frame)
+                if len(frame_view) < 2 or bytes(frame_view[:2]) != b'\xff\xd8':
+                    raise ValueError("MJPEG-Frame beginnt nicht mit JPEG-SOI")
+                chunks = [frame_view[:2]]
+                if self._first_frame:
+                    self._first_frame = False
+                    # Bestehende globale Aufnahme-Metadaten bleiben für ältere
+                    # Werkzeuge im ersten Frame erhalten.
+                    chunks.append(
+                        self._build_com_segment(self.fps, self._recording_started_at)
+                    )
+                chunks.append(self._build_frame_metadata_segment(*metadata))
+                chunks.append(frame_view[2:])
+                self._writev_all(self.record_file.fileno(), chunks)
+                self.frames_written += 1
+                return
+
+            with self.avi_lock:
+                if self.avi_writer is not None:
+                    arr = np.frombuffer(frame, dtype=np.uint8)
+                    img = cv2.imdecode(arr, 1)
+                    if img is not None:
+                        self.avi_writer.write(img)
+                        self.frames_written += 1
+        finally:
+            write_ms = (time.monotonic() - write_started_at) * 1000
+            self.max_write_ms = max(self.max_write_ms, write_ms)
+
+    def _enqueue_record_frame(self, frame, v4l2_timestamp_ns, sequence,
+                              receive_monotonic_ns, v4l2_buffer_flags):
+        """Nimmt einen Frame ohne Blockieren des Capture-Threads zur Aufnahme an."""
+        with self._recording_state_lock:
+            if not self.recording or self._writer_queue is None:
+                return
+            self._record_counter = (self._record_counter + 1) % self._record_skip
+            if self._record_counter != 0:
+                return
+            try:
+                metadata = (
+                    self._next_frame_index,
+                    sequence,
+                    v4l2_timestamp_ns,
+                    receive_monotonic_ns,
+                    v4l2_buffer_flags,
+                )
+                self._writer_queue.put_nowait((frame, metadata))
+                self._next_frame_index += 1
+                self.writer_queue_max_depth = max(
+                    self.writer_queue_max_depth, self._writer_queue.qsize()
+                )
+            except queue.Full:
+                self.writer_queue_drops += 1
+                print(
+                    f"[WRITER WARNING] Aufnahme-Queue voll; Frame verworfen "
+                    f"(drops={self.writer_queue_drops}, capacity={self.writer_queue_size})",
+                    flush=True,
+                )
+
+    def _requeue_buffer(self, buf, dequeued_at):
+        buf.type = v4l2.V4L2_BUF_TYPE_VIDEO_CAPTURE
+        buf.memory = v4l2.V4L2_MEMORY_MMAP
+        fcntl.ioctl(self.fd, v4l2.VIDIOC_QBUF, buf)
+        hold_ms = (time.monotonic() - dequeued_at) * 1000
+        self._last_buffer_hold_ms = hold_ms
+        self.max_buffer_hold_ms = max(self.max_buffer_hold_ms, hold_ms)
 
     def _capture_loop(self):
         consecutive_timeouts = 0
@@ -192,66 +408,91 @@ class V4L2MJPGStreamer:
                 self.running = False
                 break
             mm, length = self.mmaps[buf.index]
+            dequeued_at = time.monotonic()
+            receive_monotonic_ns = time.monotonic_ns()
+            frame_ts_ns = (
+                int(buf.timestamp.secs) * 1_000_000_000
+                + int(buf.timestamp.usecs) * 1_000
+            )
+            frame_ts = frame_ts_ns / 1_000_000_000
+            sequence = int(buf.sequence)
+            if buf.flags & _V4L2_BUF_FLAG_ERROR:
+                self.buffer_errors += 1
+                print(
+                    f"[V4L2-DIAG] V4L2_BUF_FLAG_ERROR sequence={sequence} "
+                    f"bytesused={buf.bytesused}",
+                    flush=True,
+                )
+                try:
+                    self._requeue_buffer(buf, dequeued_at)
+                except OSError as e:
+                    self._handle_qbuf_error(e)
+                    break
+                continue
+            if buf.bytesused <= 0:
+                try:
+                    self._requeue_buffer(buf, dequeued_at)
+                except OSError as e:
+                    self._handle_qbuf_error(e)
+                    break
+                continue
+            if self.last_sequence is not None:
+                sequence_delta = (sequence - self.last_sequence) & 0xffffffff
+                if sequence_delta != 1:
+                    lost = max(0, sequence_delta - 1)
+                    self.sequence_gaps += 1
+                    self.sequence_frames_lost += lost
+                    print(
+                        f"[V4L2-DIAG] Sequenzsprung {self.last_sequence}->{sequence} "
+                        f"(lost={lost}, previous_buffer_hold_ms={self._last_buffer_hold_ms:.3f}, "
+                        f"max_buffer_hold_ms={self.max_buffer_hold_ms:.3f})",
+                        flush=True,
+                    )
+            self.last_sequence = sequence
+            if self._last_capture_ts is not None and self.camera_fps > 0:
+                timestamp_delta = frame_ts - self._last_capture_ts
+                expected_delta = 1.0 / self.camera_fps
+                if timestamp_delta > expected_delta * 1.5:
+                    self.timestamp_gaps += 1
+                    print(
+                        f"[V4L2-DIAG] Timestamp-Luecke {timestamp_delta:.6f}s "
+                        f"(expected={expected_delta:.6f}s, sequence={sequence})",
+                        flush=True,
+                    )
+            self._last_capture_ts = frame_ts
             frame = mm[:buf.bytesused]
             # Frame-Health-Tracking
             self.frames_captured += 1
             self.last_frame_time = time.monotonic()
-            self.capture_error = None  # Frame empfangen → kein Fehler
-            if self.recording:
-                self._record_counter = (self._record_counter + 1) % self._record_skip
-                if self._record_counter == 0:
-                    # Kernel-Timestamp dieses Frames
-                    frame_ts = buf.timestamp.secs + buf.timestamp.usecs / 1_000_000
-                    if self.record_file:
-                        # Erster Frame: COM-Marker mit fps + started_at injizieren
-                        if self._first_frame:
-                            self._first_frame = False
-                            frame = self._inject_com_marker(frame, self.fps, self._recording_started_at)
-                        # A/V-Sync: fehlende Frames durch Duplikate auffüllen
-                        if self._last_written_frame_ts is not None and self._prev_frame_bytes is not None:
-                            elapsed = frame_ts - self._last_written_frame_ts
-                            n_dup = max(0, min(round(elapsed * self.fps) - 1, 15))
-                            if n_dup > 0:
-                                print(f"[SYNC] {n_dup} Frame(s) gedroppt – fülle mit Duplikaten auf (elapsed={elapsed:.3f}s)")
-                                for _ in range(n_dup):
-                                    try:
-                                        self.record_file.write(self._prev_frame_bytes)
-                                        self.frames_written += 1
-                                    except OSError as e:
-                                        msg = f"Schreibfehler beim Duplikat-Frame: {e}"
-                                        print(f"[CAPTURE ERROR] {msg}")
-                                        self.capture_error = msg
-                                        self.recording = False
-                                        break
-                        try:
-                            self.record_file.write(frame)
-                            self.frames_written += 1
-                            self._last_written_frame_ts = frame_ts
-                            self._prev_frame_bytes = frame
-                        except OSError as e:
-                            msg = f"Schreibfehler in Aufnahmedatei: {e}"
-                            print(f"[CAPTURE ERROR] {msg}")
-                            self.capture_error = msg
-                            self.recording = False
-                    else:
-                        with self.avi_lock:
-                            if self.avi_writer is not None:
-                                # MJPG-Frame als BGR-Image decodieren und in AVI schreiben
-                                arr = np.frombuffer(frame, dtype=np.uint8)
-                                img = cv2.imdecode(arr, 1)
-                                if img is not None:
-                                    self.avi_writer.write(img)
-                                    self.frames_written += 1
-            if self.preview_callback is not None and len(frame) > 0:
-                self.preview_callback(frame)
-            buf.type = v4l2.V4L2_BUF_TYPE_VIDEO_CAPTURE
-            buf.memory = v4l2.V4L2_MEMORY_MMAP
+            if self.writer_error is None:
+                self.capture_error = None  # Frame empfangen → kein Capture-Fehler
+            self._enqueue_record_frame(
+                frame,
+                frame_ts_ns,
+                sequence,
+                receive_monotonic_ns,
+                int(buf.flags),
+            )
+
+            # Der Kernel-Puffer wird direkt nach der Byte-Kopie zurückgegeben. Weder
+            # SSD-I/O noch Preview-Verarbeitung verlängern damit seine Haltezeit.
             try:
-                fcntl.ioctl(self.fd, v4l2.VIDIOC_QBUF, buf)
+                self._requeue_buffer(buf, dequeued_at)
             except OSError as e:
-                msg = f"QBUF ioctl fehlgeschlagen: {e}"
-                print(f"[CAPTURE ERROR] {msg}")
-                self.capture_error = msg
-                self.recording = False
-                self.running = False
+                self._handle_qbuf_error(e)
                 break
+
+            if self.preview_callback is not None:
+                try:
+                    self.preview_callback(frame)
+                except Exception as e:
+                    # Preview ist optional und darf die Aufnahme nie beenden.
+                    print(f"[PREVIEW ERROR] Callback fehlgeschlagen: {e}", flush=True)
+
+    def _handle_qbuf_error(self, error):
+        msg = f"QBUF ioctl fehlgeschlagen: {error}"
+        print(f"[CAPTURE ERROR] {msg}")
+        self.capture_error = msg
+        with self._recording_state_lock:
+            self.recording = False
+        self.running = False

@@ -10,7 +10,10 @@ const { OFFICIAL_IMAGE_URL, sha256 } = require("../src/download");
 test("uses the pinned official Raspberry Pi OS Lite image", () => {
   const url = new URL(OFFICIAL_IMAGE_URL);
   assert.equal(url.hostname, "downloads.raspberrypi.com");
-  assert.match(url.pathname, /raspios-bookworm-arm64-lite\.img\.xz$/);
+  assert.equal(
+    url.pathname,
+    "/raspios_lite_arm64/images/raspios_lite_arm64-2026-04-21/2026-04-21-raspios-trixie-arm64-lite.img.xz"
+  );
 });
 
 test("calculates sha256", async () => {

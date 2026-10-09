@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPOSITORY_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUTPUT_DIRECTORY=${1:?Ausgabeverzeichnis fehlt}
-RUNTIME_NAME=kaderblick-camera-runtime-bookworm-arm64.tar.xz
+RUNTIME_NAME=kaderblick-camera-runtime-trixie-arm64.tar.xz
 FILES_DIRECTORY="${REPOSITORY_ROOT}/image-builder/stage-kaderblick/00-runtime/files"
 STAGING_DIRECTORY=$(mktemp -d)
 trap 'rm -rf "${STAGING_DIRECTORY}"' EXIT

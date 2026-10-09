@@ -9,6 +9,7 @@ Import-Strategie:
     werden diese Module komplett durch MagicMocks ersetzt BEVOR das Modul
     importiert wird. conftest.py übernimmt lgpio, hier wird zmq gepatcht.
 """
+import asyncio
 import json
 import sys
 from unittest.mock import MagicMock, patch
@@ -519,16 +520,20 @@ class TestSystemInfo:
 
 class TestSystemShutdown:
     def test_returns_200_and_status(self):
-        with patch("subprocess.Popen") as m:
+        with patch("subprocess.Popen") as m, \
+             patch.object(fastapi_app._stream, "request_shutdown") as shutdown:
             r = client.post("/system/shutdown")
         assert r.status_code == 200
         assert "shutdown" in r.json()["status"]
         m.assert_called_once_with(["sudo", "shutdown", "-h", "now"])
+        shutdown.assert_called_once_with()
 
     def test_error_returns_500(self):
-        with patch("subprocess.Popen", side_effect=OSError("not found")):
+        with patch("subprocess.Popen", side_effect=OSError("not found")), \
+             patch.object(fastapi_app._stream, "request_shutdown") as shutdown:
             r = client.post("/system/shutdown")
         assert r.status_code == 500
+        shutdown.assert_not_called()
 
 
 # ===========================================================================
@@ -537,16 +542,40 @@ class TestSystemShutdown:
 
 class TestSystemReboot:
     def test_returns_200_and_status(self):
-        with patch("subprocess.Popen") as m:
+        with patch("subprocess.Popen") as m, \
+             patch.object(fastapi_app._stream, "request_shutdown") as shutdown:
             r = client.post("/system/reboot")
         assert r.status_code == 200
         assert "reboot" in r.json()["status"]
         m.assert_called_once_with(["sudo", "reboot"])
+        shutdown.assert_called_once_with()
 
     def test_error_returns_500(self):
-        with patch("subprocess.Popen", side_effect=OSError("not found")):
+        with patch("subprocess.Popen", side_effect=OSError("not found")), \
+             patch.object(fastapi_app._stream, "request_shutdown") as shutdown:
             r = client.post("/system/reboot")
         assert r.status_code == 500
+        shutdown.assert_not_called()
+
+
+class TestApplicationShutdown:
+    def test_lifespan_closes_stream_resources(self):
+        async def run_lifespan():
+            async with fastapi_app.lifespan(fastapi_app.app):
+                pass
+
+        with patch.object(fastapi_app._stream, "shutdown") as shutdown:
+            asyncio.run(run_lifespan())
+
+        shutdown.assert_called_once_with()
+
+    def test_request_shutdown_wakes_preview_and_background_tasks(self):
+        with patch.object(fastapi_app._stream.stop_event, "set") as stop, \
+             patch.object(fastapi_app._stream.new_frame_event, "set") as wake:
+            fastapi_app._stream.request_shutdown()
+
+        stop.assert_called_once_with()
+        wake.assert_called_once_with()
 
 
 # ===========================================================================

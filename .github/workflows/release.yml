@@ -42,7 +42,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run lint
-      - run: npm run dist
+      - run: npm run dist:prebuilt
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}

@@ -9,6 +9,8 @@ Hardware-Mocks (v4l2, numpy, cv2) werden bereits durch tests/conftest.py gesetzt
 """
 import threading
 import time
+import queue
+import struct
 from unittest.mock import MagicMock, patch, mock_open
 
 import pytest
@@ -27,7 +29,8 @@ class TestInit:
         assert s.width == 3840
         assert s.height == 2160
         assert s.fps == 30
-        assert s.buffers == 4
+        assert s.buffers == 12
+        assert s.writer_queue_size == 128
         assert s.fd is None
         assert s.mmaps == []
         assert s.running is False
@@ -236,6 +239,124 @@ class TestRecording:
         assert before <= s.recording_start_time <= after
         s.stop_recording()
 
+    def test_writer_queue_is_drained_before_file_is_closed(self, tmp_path):
+        s = V4L2MJPGStreamer()
+        output = tmp_path / "test.mjpg"
+        frame = b"\xff\xd8payload"
+        s.start_recording(str(output), started_at="2026-10-09T12:00:00")
+
+        s._enqueue_record_frame(frame, 1_000_000_000, 17, 2_000_000_000, 0x2000)
+        s.stop_recording()
+
+        written = output.read_bytes()
+        assert written.startswith(b"\xff\xd8\xff\xfe")
+        assert written.endswith(b"payload")
+        assert s.frames_written == 1
+
+    def test_full_writer_queue_drops_without_blocking(self):
+        s = V4L2MJPGStreamer(writer_queue_size=1)
+        s._writer_queue = queue.Queue(maxsize=1)
+        s._record_skip = 1
+        s._record_counter = 0
+        s.recording = True
+
+        s._enqueue_record_frame(b"first", 1_000_000_000, 17, 2_000_000_000, 0)
+        before = time.monotonic()
+        s._enqueue_record_frame(b"second", 2_000_000_000, 18, 3_000_000_000, 0)
+        elapsed = time.monotonic() - before
+
+        assert elapsed < 0.1
+        assert s.writer_queue_drops == 1
+        frame, metadata = s._writer_queue.get_nowait()
+        assert frame == b"first"
+        assert metadata == (0, 17, 1_000_000_000, 2_000_000_000, 0)
+
+    def test_slow_writer_does_not_block_enqueue(self, tmp_path):
+        s = V4L2MJPGStreamer()
+        writer_entered = threading.Event()
+        release_writer = threading.Event()
+        original_write = s._write_record_frame
+
+        def slow_write(frame, metadata):
+            writer_entered.set()
+            release_writer.wait(timeout=2)
+            original_write(frame, metadata)
+
+        with patch.object(s, "_write_record_frame", side_effect=slow_write):
+            s.start_recording(str(tmp_path / "test.mjpg"))
+            s._enqueue_record_frame(
+                b"\xff\xd8one", 1_000_000_000, 17, 2_000_000_000, 0
+            )
+            assert writer_entered.wait(timeout=1)
+
+            before = time.monotonic()
+            s._enqueue_record_frame(
+                b"\xff\xd8two", 2_000_000_000, 18, 3_000_000_000, 0
+            )
+            elapsed = time.monotonic() - before
+            release_writer.set()
+            s.stop_recording()
+
+        assert elapsed < 0.1
+        assert s.frames_written >= 2
+
+    def test_every_raw_frame_contains_exact_app15_metadata(self, tmp_path):
+        s = V4L2MJPGStreamer()
+        output = tmp_path / "metadata.mjpg"
+        s.start_recording(str(output), started_at="2026-10-09T12:00:00")
+
+        s._enqueue_record_frame(
+            b"\xff\xd8first\xff\xd9",
+            1_234_567_890_123,
+            41,
+            9_876_543_210_123,
+            0x2000,
+        )
+        s._enqueue_record_frame(
+            b"\xff\xd8second\xff\xd9",
+            1_267_901_223_123,
+            42,
+            9_876_576_543_123,
+            0x2000,
+        )
+        s.stop_recording()
+
+        data = output.read_bytes()
+        marker = b"\xff\xef\x00\x2aKBFM"
+        marker_offsets = []
+        offset = 0
+        while True:
+            offset = data.find(marker, offset)
+            if offset < 0:
+                break
+            marker_offsets.append(offset)
+            offset += len(marker)
+
+        assert len(marker_offsets) == 2
+        metadata_struct = struct.Struct(">4sBBHQIQQI")
+        first = metadata_struct.unpack_from(data, marker_offsets[0] + 4)
+        second = metadata_struct.unpack_from(data, marker_offsets[1] + 4)
+        assert first == (
+            b"KBFM", 1, 0, metadata_struct.size, 0, 41,
+            1_234_567_890_123, 9_876_543_210_123, 0x2000,
+        )
+        assert second == (
+            b"KBFM", 1, 0, metadata_struct.size, 1, 42,
+            1_267_901_223_123, 9_876_576_543_123, 0x2000,
+        )
+
+    def test_timestamp_gap_does_not_create_synthetic_raw_frames(self, tmp_path):
+        s = V4L2MJPGStreamer(fps=30)
+        output = tmp_path / "gap.mjpg"
+        s.start_recording(str(output))
+
+        s._enqueue_record_frame(b"\xff\xd8one\xff\xd9", 1_000_000_000, 1, 10, 0)
+        s._enqueue_record_frame(b"\xff\xd8two\xff\xd9", 2_000_000_000, 2, 20, 0)
+        s.stop_recording()
+
+        assert s.frames_written == 2
+        assert output.read_bytes().count(b"KBFM") == 2
+
 
 # ===========================================================================
 # _capture_loop – Timeout-Logik (isoliert über direkte Attributmanipulation)
@@ -328,6 +449,10 @@ class TestCaptureLoopTimeoutLogic:
         buf_mock = MagicMock()
         buf_mock.index = 0
         buf_mock.bytesused = 104
+        buf_mock.flags = 0
+        buf_mock.sequence = 1
+        buf_mock.timestamp.secs = 1
+        buf_mock.timestamp.usecs = 0
 
         def fake_select(rlist, wlist, xlist, timeout):
             call_count[0] += 1
@@ -352,6 +477,41 @@ class TestCaptureLoopTimeoutLogic:
         # Nach dem Frame darf capture_error nicht gesetzt sein
         assert s.capture_error is None
         assert s.frames_captured >= 1
+
+    def test_buffer_is_requeued_before_preview_callback(self):
+        import v4l2 as _v4l2
+
+        s = self._make_streamer_with_mocked_fd()
+        s.running = True
+        events = []
+        select_calls = [0]
+        buf_mock = MagicMock()
+        buf_mock.index = 0
+        buf_mock.bytesused = 104
+        buf_mock.flags = 0
+        buf_mock.sequence = 1
+        buf_mock.timestamp.secs = 1
+        buf_mock.timestamp.usecs = 0
+
+        def fake_select(rlist, wlist, xlist, timeout):
+            select_calls[0] += 1
+            if select_calls[0] == 1:
+                return [s.fd], [], []
+            s.running = False
+            return [], [], []
+
+        def fake_ioctl(fd, request, buf):
+            if request == _v4l2.VIDIOC_QBUF:
+                events.append("qbuf")
+
+        s.set_preview_callback(lambda frame: events.append("preview"))
+        import select as real_select
+        with patch.object(real_select, "select", fake_select), \
+             patch("fcntl.ioctl", fake_ioctl), \
+             patch("v4l2.v4l2_buffer", return_value=buf_mock):
+            s._capture_loop()
+
+        assert events == ["qbuf", "preview"]
 
 
 # ===========================================================================

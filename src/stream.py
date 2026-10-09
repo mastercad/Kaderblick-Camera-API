@@ -1,6 +1,5 @@
 import os
 import threading
-import time
 from threading import Lock
 
 import zmq
@@ -68,8 +67,43 @@ def _disk_space_monitor() -> None:
                 disk_space_error.clear()
         except Exception:
             pass
-        time.sleep(5)
+        # Reagiert beim Herunterfahren sofort, statt den Prozess bis zu fünf
+        # Sekunden in ``sleep`` festzuhalten.
+        stop_event.wait(5)
 
 
-threading.Thread(target=_frame_listener, daemon=True).start()
-threading.Thread(target=_disk_space_monitor, daemon=True).start()
+_frame_listener_thread = threading.Thread(
+    target=_frame_listener,
+    daemon=True,
+    name="preview-frame-listener",
+)
+_disk_space_monitor_thread = threading.Thread(
+    target=_disk_space_monitor,
+    daemon=True,
+    name="disk-space-monitor",
+)
+_frame_listener_thread.start()
+_disk_space_monitor_thread.start()
+
+
+def request_shutdown() -> None:
+    """Beendet Preview-Streams und weckt alle wartenden Hintergrundtasks."""
+    stop_event.set()
+    new_frame_event.set()
+
+
+def shutdown() -> None:
+    """Beendet Threads und ZMQ-Ressourcen idempotent und ohne Linger-Wartezeit."""
+    request_shutdown()
+    _frame_listener_thread.join(timeout=1.0)
+    _disk_space_monitor_thread.join(timeout=1.0)
+
+    for socket in (req_socket, _sub_socket):
+        try:
+            socket.close(linger=0)
+        except Exception:
+            pass
+    try:
+        _context.term()
+    except Exception:
+        pass

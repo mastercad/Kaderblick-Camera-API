@@ -10,7 +10,7 @@ const { downloadOfficialImage } = require("./download");
 const { elevatedFlash } = require("./elevated-flash");
 
 const execFileAsync = promisify(execFile);
-const RUNTIME_NAME = "kaderblick-camera-runtime-bookworm-arm64.tar.xz";
+const RUNTIME_NAME = "kaderblick-camera-runtime-trixie-arm64.tar.xz";
 
 let mainWindow;
 let flashing = false;

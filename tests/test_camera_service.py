@@ -70,6 +70,13 @@ def _load_camera_service(zmq_mock, streamer_mock, audio_device="hw:1,0"):
     sys.modules["v4l2_mjpg_stream"] = MagicMock(
         V4L2MJPGStreamer=MagicMock(return_value=streamer_mock)
     )
+    audio_recorder = MagicMock()
+    audio_recorder.start.return_value = audio_recorder
+    audio_recorder.wait_for_first_timestamp.return_value = True
+    audio_recorder.poll.return_value = None
+    sys.modules["timestamped_audio"] = MagicMock(
+        TimestampedAudioRecorder=MagicMock(return_value=audio_recorder)
+    )
 
     # Falls bereits geladen, entfernen um sauberen Import zu gewährleisten
     if "camera_service" in sys.modules:
@@ -151,6 +158,40 @@ class TestHandleCommandsStart:
 
         sent = self.rep.send_string.call_args_list
         assert len(sent) >= 1
+
+    def test_start_uses_timestamped_audio_and_waits_for_first_anchor(self, tmp_path):
+        self.streamer.recording = False
+        (tmp_path / "recordings").mkdir()
+        original_file = self.cs.__file__
+        self.cs.__file__ = str(tmp_path / "src" / "camera_service.py")
+        try:
+            self._run_one_command("START")
+        finally:
+            self.cs.__file__ = original_file
+
+        self.cs.TimestampedAudioRecorder.assert_called_once()
+        device, filename = self.cs.TimestampedAudioRecorder.call_args.args
+        assert device == "hw:1,0"
+        assert filename.endswith(".wav")
+        recorder = self.cs.TimestampedAudioRecorder.return_value
+        recorder.start.assert_called_once_with()
+        recorder.wait_for_first_timestamp.assert_called_once_with(2.0)
+
+    def test_stop_finalizes_timestamped_audio(self):
+        recorder = MagicMock()
+        recorder.poll.return_value = None
+        recorder.frames_written = 48_000
+        recorder.timestamp_records = 40
+        recorder.xrun_count = 0
+        recorder.clipped_samples = 0
+        self.cs.audio_proc = recorder
+        self.streamer.recording = True
+
+        self._run_one_command("STOP")
+
+        recorder.terminate.assert_called_once_with()
+        recorder.wait.assert_called_once_with(timeout=2)
+        assert self.cs.audio_proc is None
 
     def test_stop_sends_response(self):
         self.cs.recording_flag = True

@@ -13,7 +13,9 @@ Die produktiven Raspberry Pi 5 werden mit dem **Kaderblick Kamera Setup** vorber
 
 ## Datenträger vorbereiten
 
-1. Portable Version oder Installer aus dem neuesten GitHub Release starten.
+1. Portable Version oder Installer ab Version 0.3.0 aus dem neuesten GitHub
+   Release starten. Ältere Versionen enthalten nicht den aktuellen
+   ALSA-/Zeitstempel-Aufnahmepfad.
 2. Kamera 1 oder Kamera 2 auswählen.
 3. Konto, Passwort, IPv4-Adresse und Netzmaske eintragen.
 4. Den für den Einsatz vorgesehenen Gateway eintragen (`192.168.178.1` im Heimnetz oder `192.168.178.2` am Kamera-Hotspot).
@@ -139,11 +141,12 @@ network:
 
 ## Vorinstallierte Komponenten
 
-- Raspberry Pi OS Bookworm 64-bit, minimales bootfähiges System ohne Desktop
+- Raspberry Pi OS Trixie 64-bit, minimales bootfähiges System ohne Desktop
 - Python-Venv und Camera API
 - V4L2/UVC, Arducam-udev-Regel und USB-Reset-Berechtigung
 - `lgpio`, OpenCV, ZeroMQ, FastAPI/Uvicorn
-- ALSA/`arecord`
+- direkte ALSA-Aufnahme mit monotonen Zeitankern, 3-facher Pegelanhebung und
+  Dual-Mono-Ausgabe
 - OpenSSH
 - Samba-Freigabe `recordings`
 - Offline-Zeitfortschreibung mit `fake-hwclock`
