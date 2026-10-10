@@ -100,6 +100,8 @@ test("runs time synchronization only before camera services and disables mainten
   assert.doesNotMatch(preflightService, /OnCalendar|\.timer/);
   assert.match(preflight, /HTTPConnection\("deb\.debian\.org", 80/);
   assert.match(preflight, /fstrim --quiet-unsupported \/ /);
+  assert.match(preflight, /CPU_MAX_FREQ_KHZ=1500000/);
+  assert.match(preflight, /policy\*\/scaling_max_freq/);
   assert.match(installer, /systemctl mask apt-daily\.service/);
   assert.match(installer, /cron\.service/);
   assert.match(installer, /fstrim\.timer/);

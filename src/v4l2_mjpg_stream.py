@@ -9,6 +9,7 @@ import time
 import json
 import queue
 import struct
+from datetime import datetime
 import numpy as np
 import cv2
 
@@ -39,6 +40,7 @@ class V4L2MJPGStreamer:
         self.recording = False
         self.record_file = None
         self.preview_callback = None
+        self.health_event_callback = None
         self.thread = None
         self.avi_writer = None
         self.avi_lock = threading.Lock()
@@ -56,17 +58,25 @@ class V4L2MJPGStreamer:
         self.last_sequence = None
         self.sequence_gaps = 0
         self.sequence_frames_lost = 0
+        self.sequence_resets = 0
         self.timestamp_gaps = 0
         self.buffer_errors = 0
+        self.invalid_mjpeg_frames = 0
         self.max_buffer_hold_ms = 0.0
         self.max_write_ms = 0.0
         self.writer_queue_max_depth = 0
         self.writer_queue_drops = 0
         self.writer_error = None
+        self.health_event_count = 0
         self._last_capture_ts = None
         self._last_buffer_hold_ms = 0.0
 
     def open(self):
+        # Ein neu geöffneter UVC-Stream beginnt wieder bei einer eigenen
+        # Sequenz-/Zeitbasis. Werte des vorherigen Streams dürfen deshalb nicht
+        # als Frameverlust über einen USB-Reset hinweg interpretiert werden.
+        self.last_sequence = None
+        self._last_capture_ts = None
         self.fd = os.open(self.device, os.O_RDWR | os.O_NONBLOCK)
         fmt = v4l2.v4l2_format()
         fmt.type = v4l2.V4L2_BUF_TYPE_VIDEO_CAPTURE
@@ -106,6 +116,30 @@ class V4L2MJPGStreamer:
 
     def set_preview_callback(self, callback):
         self.preview_callback = callback
+
+    def set_health_event_callback(self, callback):
+        """Registriert einen nicht blockierenden Empfänger für Diagnoseereignisse."""
+        self.health_event_callback = callback
+
+    def _emit_health_event(self, event_type, message, severity="warning", **details):
+        """Meldet eine Auffälligkeit, ohne den Capture-Pfad bei Fehlern zu stoppen."""
+        self.health_event_count += 1
+        callback = self.health_event_callback
+        if callback is None:
+            return
+        event = {
+            "timestamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+            "monotonic_ns": time.monotonic_ns(),
+            "type": event_type,
+            "severity": severity,
+            "message": message,
+            "recording": bool(self.recording),
+            **details,
+        }
+        try:
+            callback(event)
+        except Exception as error:
+            print(f"[HEALTH LOG ERROR] Diagnoseereignis konnte nicht gemeldet werden: {error}", flush=True)
 
     def start(self):
         self.running = True
@@ -185,13 +219,16 @@ class V4L2MJPGStreamer:
         self.capture_error = None
         self.sequence_gaps = 0
         self.sequence_frames_lost = 0
+        self.sequence_resets = 0
         self.timestamp_gaps = 0
         self.buffer_errors = 0
+        self.invalid_mjpeg_frames = 0
         self.max_buffer_hold_ms = 0.0
         self.max_write_ms = 0.0
         self.writer_queue_max_depth = 0
         self.writer_queue_drops = 0
         self.writer_error = None
+        self.health_event_count = 0
         self.recording_start_time = time.monotonic()
         self._recording_started_at = started_at or ''
         self._first_frame = True
@@ -258,8 +295,10 @@ class V4L2MJPGStreamer:
             f"[V4L2-DIAG] Aufnahme-Zusammenfassung: "
             f"sequence_gaps={self.sequence_gaps}, "
             f"sequence_frames_lost={self.sequence_frames_lost}, "
+            f"sequence_resets={self.sequence_resets}, "
             f"timestamp_gaps={self.timestamp_gaps}, "
             f"buffer_errors={self.buffer_errors}, "
+            f"invalid_mjpeg_frames={self.invalid_mjpeg_frames}, "
             f"allocated_buffers={self.allocated_buffers}, "
             f"max_buffer_hold_ms={self.max_buffer_hold_ms:.3f}, "
             f"max_write_ms={self.max_write_ms:.3f}, "
@@ -289,6 +328,7 @@ class V4L2MJPGStreamer:
             print(f"[WRITER ERROR] {msg}", flush=True)
             self.writer_error = msg
             self.capture_error = msg
+            self._emit_health_event("writer_error", msg, severity="error")
             with self._recording_state_lock:
                 self.recording = False
 
@@ -312,7 +352,19 @@ class V4L2MJPGStreamer:
             if self.record_file is not None:
                 frame_view = memoryview(frame)
                 if len(frame_view) < 2 or bytes(frame_view[:2]) != b'\xff\xd8':
-                    raise ValueError("MJPEG-Frame beginnt nicht mit JPEG-SOI")
+                    self.invalid_mjpeg_frames += 1
+                    self._emit_health_event(
+                        "invalid_mjpeg_frame",
+                        "Writer hat ein MJPEG-Frame ohne JPEG-SOI verworfen",
+                        source="writer",
+                        total=self.invalid_mjpeg_frames,
+                    )
+                    print(
+                        "[WRITER WARNING] Ungültiges MJPEG-Frame ohne JPEG-SOI "
+                        "verworfen.",
+                        flush=True,
+                    )
+                    return
                 chunks = [frame_view[:2]]
                 if self._first_frame:
                     self._first_frame = False
@@ -362,6 +414,12 @@ class V4L2MJPGStreamer:
                 )
             except queue.Full:
                 self.writer_queue_drops += 1
+                self._emit_health_event(
+                    "writer_queue_drop",
+                    "Aufnahme-Queue war voll; Frame wurde verworfen",
+                    drops=self.writer_queue_drops,
+                    capacity=self.writer_queue_size,
+                )
                 print(
                     f"[WRITER WARNING] Aufnahme-Queue voll; Frame verworfen "
                     f"(drops={self.writer_queue_drops}, capacity={self.writer_queue_size})",
@@ -376,6 +434,53 @@ class V4L2MJPGStreamer:
         self._last_buffer_hold_ms = hold_ms
         self.max_buffer_hold_ms = max(self.max_buffer_hold_ms, hold_ms)
 
+    def _track_sequence(self, sequence):
+        """Erfasst echte Vorwärtssprünge, ohne Resets als Milliardenverlust zu zählen."""
+        if self.last_sequence is None:
+            self.last_sequence = sequence
+            return
+
+        previous = self.last_sequence
+        sequence_delta = (sequence - previous) & 0xffffffff
+        self.last_sequence = sequence
+        if sequence_delta == 1:
+            return
+        if sequence_delta == 0 or sequence_delta > 0x7fffffff:
+            self.sequence_resets += 1
+            self._emit_health_event(
+                "v4l2_sequence_reset",
+                f"V4L2-Sequenz wurde von {previous} auf {sequence} zurückgesetzt",
+                previous_sequence=previous,
+                sequence=sequence,
+                resets=self.sequence_resets,
+            )
+            print(
+                f"[V4L2-DIAG] Sequenz-Reset {previous}->{sequence} "
+                f"(resets={self.sequence_resets})",
+                flush=True,
+            )
+            return
+
+        lost = sequence_delta - 1
+        self.sequence_gaps += 1
+        self.sequence_frames_lost += lost
+        self._emit_health_event(
+            "v4l2_sequence_gap",
+            f"V4L2-Sequenzsprung: {lost} Frame(s) fehlen",
+            previous_sequence=previous,
+            sequence=sequence,
+            frames_lost=lost,
+            frames_lost_total=self.sequence_frames_lost,
+            previous_buffer_hold_ms=round(self._last_buffer_hold_ms, 3),
+            max_buffer_hold_ms=round(self.max_buffer_hold_ms, 3),
+        )
+        print(
+            f"[V4L2-DIAG] Sequenzsprung {previous}->{sequence} "
+            f"(lost={lost}, previous_buffer_hold_ms={self._last_buffer_hold_ms:.3f}, "
+            f"max_buffer_hold_ms={self.max_buffer_hold_ms:.3f})",
+            flush=True,
+        )
+
     def _capture_loop(self):
         consecutive_timeouts = 0
         MAX_CONSECUTIVE_TIMEOUTS = 10  # 10s ohne Frame → Fehler
@@ -388,6 +493,8 @@ class V4L2MJPGStreamer:
                            f"Hardware-Problem? (select.select Timeout)")
                     print(f"[CAPTURE ERROR] {msg}")
                     self.capture_error = msg
+                    if consecutive_timeouts == MAX_CONSECUTIVE_TIMEOUTS:
+                        self._emit_health_event("capture_timeout", msg, severity="error")
                     if self.recording:
                         self.recording = False
                     # Weiterlaufen um Recovery zu ermöglichen, aber Error ist gesetzt
@@ -404,6 +511,7 @@ class V4L2MJPGStreamer:
                 msg = f"DQBUF ioctl fehlgeschlagen: {e}"
                 print(f"[CAPTURE ERROR] {msg}")
                 self.capture_error = msg
+                self._emit_health_event("dqbuf_error", msg, severity="error")
                 self.recording = False
                 self.running = False
                 break
@@ -418,6 +526,13 @@ class V4L2MJPGStreamer:
             sequence = int(buf.sequence)
             if buf.flags & _V4L2_BUF_FLAG_ERROR:
                 self.buffer_errors += 1
+                self._emit_health_event(
+                    "v4l2_buffer_error",
+                    "V4L2 lieferte einen Puffer mit gesetztem ERROR-Flag",
+                    sequence=sequence,
+                    bytesused=int(buf.bytesused),
+                    total=self.buffer_errors,
+                )
                 print(
                     f"[V4L2-DIAG] V4L2_BUF_FLAG_ERROR sequence={sequence} "
                     f"bytesused={buf.bytesused}",
@@ -436,24 +551,20 @@ class V4L2MJPGStreamer:
                     self._handle_qbuf_error(e)
                     break
                 continue
-            if self.last_sequence is not None:
-                sequence_delta = (sequence - self.last_sequence) & 0xffffffff
-                if sequence_delta != 1:
-                    lost = max(0, sequence_delta - 1)
-                    self.sequence_gaps += 1
-                    self.sequence_frames_lost += lost
-                    print(
-                        f"[V4L2-DIAG] Sequenzsprung {self.last_sequence}->{sequence} "
-                        f"(lost={lost}, previous_buffer_hold_ms={self._last_buffer_hold_ms:.3f}, "
-                        f"max_buffer_hold_ms={self.max_buffer_hold_ms:.3f})",
-                        flush=True,
-                    )
-            self.last_sequence = sequence
+            self._track_sequence(sequence)
             if self._last_capture_ts is not None and self.camera_fps > 0:
                 timestamp_delta = frame_ts - self._last_capture_ts
                 expected_delta = 1.0 / self.camera_fps
                 if timestamp_delta > expected_delta * 1.5:
                     self.timestamp_gaps += 1
+                    self._emit_health_event(
+                        "v4l2_timestamp_gap",
+                        f"V4L2-Zeitstempellücke von {timestamp_delta:.6f}s",
+                        sequence=sequence,
+                        delta_s=round(timestamp_delta, 6),
+                        expected_delta_s=round(expected_delta, 6),
+                        total=self.timestamp_gaps,
+                    )
                     print(
                         f"[V4L2-DIAG] Timestamp-Luecke {timestamp_delta:.6f}s "
                         f"(expected={expected_delta:.6f}s, sequence={sequence})",
@@ -466,6 +577,36 @@ class V4L2MJPGStreamer:
             self.last_frame_time = time.monotonic()
             if self.writer_error is None:
                 self.capture_error = None  # Frame empfangen → kein Capture-Fehler
+
+            # Manche Arducam-UVC-Fehlerbursts liefern nach der Kernel-
+            # Resynchronisierung einen Puffer ohne gesetztes ERROR-Flag, dessen
+            # Nutzdaten trotzdem kein JPEG sind. Solche Frames dürfen weder die
+            # Aufnahme beenden noch Preview-Clients vergiften.
+            if len(frame) < 2 or frame[:2] != b'\xff\xd8':
+                self.invalid_mjpeg_frames += 1
+                prefix = frame[:16].hex()
+                self._emit_health_event(
+                    "invalid_mjpeg_frame",
+                    "Capture lieferte ein MJPEG-Frame ohne JPEG-SOI",
+                    source="capture",
+                    sequence=sequence,
+                    bytesused=int(buf.bytesused),
+                    prefix=prefix,
+                    total=self.invalid_mjpeg_frames,
+                )
+                print(
+                    f"[V4L2-DIAG] Ungültiges MJPEG-Frame verworfen "
+                    f"(sequence={sequence}, bytesused={buf.bytesused}, "
+                    f"prefix={prefix}, total={self.invalid_mjpeg_frames})",
+                    flush=True,
+                )
+                try:
+                    self._requeue_buffer(buf, dequeued_at)
+                except OSError as e:
+                    self._handle_qbuf_error(e)
+                    break
+                continue
+
             self._enqueue_record_frame(
                 frame,
                 frame_ts_ns,
@@ -493,6 +634,7 @@ class V4L2MJPGStreamer:
         msg = f"QBUF ioctl fehlgeschlagen: {error}"
         print(f"[CAPTURE ERROR] {msg}")
         self.capture_error = msg
+        self._emit_health_event("qbuf_error", msg, severity="error")
         with self._recording_state_lock:
             self.recording = False
         self.running = False

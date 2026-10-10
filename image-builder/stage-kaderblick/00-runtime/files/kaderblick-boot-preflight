@@ -1,6 +1,23 @@
 #!/bin/bash
 set -uo pipefail
 
+# Die Arducam, USB-Audio und USB-SSD teilen sich die Leistungsreserve des Pi.
+# Auf den produktiven Pis reproduzierte 2,4-GHz-Volllast Kernel-Unterspannung
+# und unmittelbar anschliessende UVC-Payload-Verluste. Mit 1,5 GHz blieb
+# derselbe Vierkern-Lasttest auf beiden Geraeten fehlerfrei. Die Begrenzung
+# wird vor dem Start der Kamera-Dienste gesetzt und vermeidet Boost-Spitzen;
+# der Leerlauftakt und der ondemand-Governor bleiben unveraendert.
+readonly CPU_MAX_FREQ_KHZ=1500000
+for max_freq_file in /sys/devices/system/cpu/cpufreq/policy*/scaling_max_freq; do
+  [ -e "${max_freq_file}" ] || continue
+  current_max=$(cat "${max_freq_file}" 2>/dev/null) || continue
+  if [ "${current_max}" -gt "${CPU_MAX_FREQ_KHZ}" ]; then
+    if ! printf '%s\n' "${CPU_MAX_FREQ_KHZ}" > "${max_freq_file}"; then
+      echo "Konnte CPU-Obergrenze fuer ${max_freq_file} nicht setzen" >&2
+    fi
+  fi
+done
+
 # Ausschliesslich vor dem Start der Kamera-Dienste ausfuehren. Es gibt bewusst
 # keinen Timer und keinen spaeteren Wiederholungsversuch im Aufnahmebetrieb.
 for _ in $(seq 1 5); do

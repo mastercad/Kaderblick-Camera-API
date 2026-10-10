@@ -83,6 +83,32 @@ class TestSetPreviewCallback:
         assert s.preview_callback is None
 
 
+class TestHealthEvents:
+    def test_sequence_gap_emits_timestamped_event(self):
+        s = V4L2MJPGStreamer()
+        callback = MagicMock()
+        s.set_health_event_callback(callback)
+        s._track_sequence(10)
+        s._track_sequence(13)
+
+        event = callback.call_args.args[0]
+        assert event["type"] == "v4l2_sequence_gap"
+        assert event["frames_lost"] == 2
+        assert event["frames_lost_total"] == 2
+        assert event["timestamp"]
+        assert s.health_event_count == 1
+
+    def test_callback_failure_does_not_escape_capture_path(self):
+        s = V4L2MJPGStreamer()
+        s.set_health_event_callback(MagicMock(side_effect=OSError("log unavailable")))
+
+        s._track_sequence(1)
+        s._track_sequence(3)
+
+        assert s.sequence_frames_lost == 1
+        assert s.health_event_count == 1
+
+
 # ===========================================================================
 # is_capture_healthy
 # ===========================================================================
@@ -165,10 +191,28 @@ class TestRecording:
         s = V4L2MJPGStreamer()
         s.frames_written = 99
         s.capture_error = "old error"
+        s.sequence_resets = 3
+        s.invalid_mjpeg_frames = 4
         s.start_recording(str(tmp_path / "test.raw"))
         assert s.frames_written == 0
         assert s.capture_error is None
+        assert s.sequence_resets == 0
+        assert s.invalid_mjpeg_frames == 0
         s.stop_recording()
+
+    def test_invalid_writer_frame_is_dropped_without_stopping_recording(self, tmp_path):
+        s = V4L2MJPGStreamer()
+        output = tmp_path / "test.mjpg"
+        s.start_recording(str(output))
+
+        s._enqueue_record_frame(b"not-a-jpeg", 1, 1, 1, 0)
+        s._enqueue_record_frame(b"\xff\xd8valid\xff\xd9", 2, 2, 2, 0)
+        s.stop_recording()
+
+        assert s.writer_error is None
+        assert s.invalid_mjpeg_frames == 1
+        assert s.frames_written == 1
+        assert b"valid" in output.read_bytes()
 
     def test_start_recording_raw_no_avi_writer(self, tmp_path):
         s = V4L2MJPGStreamer()
@@ -512,6 +556,76 @@ class TestCaptureLoopTimeoutLogic:
             s._capture_loop()
 
         assert events == ["qbuf", "preview"]
+
+    def test_invalid_mjpeg_frame_is_requeued_but_not_published_or_recorded(self):
+        import v4l2 as _v4l2
+
+        s = self._make_streamer_with_mocked_fd()
+        s.running = True
+        s.mmaps[0][0].__getitem__ = lambda self, key: b"broken-frame"
+        preview = MagicMock()
+        enqueue = MagicMock()
+        s.set_preview_callback(preview)
+        s._enqueue_record_frame = enqueue
+        select_calls = [0]
+        qbuf_calls = [0]
+        buf_mock = MagicMock()
+        buf_mock.index = 0
+        buf_mock.bytesused = 12
+        buf_mock.flags = 0
+        buf_mock.sequence = 7
+        buf_mock.timestamp.secs = 1
+        buf_mock.timestamp.usecs = 0
+
+        def fake_select(rlist, wlist, xlist, timeout):
+            select_calls[0] += 1
+            if select_calls[0] == 1:
+                return [s.fd], [], []
+            s.running = False
+            return [], [], []
+
+        def fake_ioctl(fd, request, buf):
+            if request == _v4l2.VIDIOC_QBUF:
+                qbuf_calls[0] += 1
+
+        import select as real_select
+        with patch.object(real_select, "select", fake_select), \
+             patch("fcntl.ioctl", fake_ioctl), \
+             patch("v4l2.v4l2_buffer", return_value=buf_mock):
+            s._capture_loop()
+
+        assert s.invalid_mjpeg_frames == 1
+        assert qbuf_calls[0] == 1
+        preview.assert_not_called()
+        enqueue.assert_not_called()
+
+
+class TestSequenceTracking:
+    def test_forward_gap_counts_only_missing_frames(self):
+        s = V4L2MJPGStreamer()
+        s._track_sequence(100)
+        s._track_sequence(104)
+
+        assert s.sequence_gaps == 1
+        assert s.sequence_frames_lost == 3
+        assert s.sequence_resets == 0
+
+    def test_backward_sequence_is_reset_not_billions_of_lost_frames(self):
+        s = V4L2MJPGStreamer()
+        s._track_sequence(4538)
+        s._track_sequence(0)
+
+        assert s.sequence_gaps == 0
+        assert s.sequence_frames_lost == 0
+        assert s.sequence_resets == 1
+
+    def test_duplicate_sequence_is_reset(self):
+        s = V4L2MJPGStreamer()
+        s._track_sequence(12)
+        s._track_sequence(12)
+
+        assert s.sequence_frames_lost == 0
+        assert s.sequence_resets == 1
 
 
 # ===========================================================================

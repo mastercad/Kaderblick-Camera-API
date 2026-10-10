@@ -209,6 +209,24 @@ class TestHandleCommandsStart:
         recorder.wait.assert_called_once_with(timeout=2)
         assert self.cs.audio_proc is None
 
+    def test_stop_finalizes_audio_after_video_already_failed(self):
+        recorder = MagicMock()
+        recorder.poll.return_value = None
+        recorder.frames_written = 48_000
+        recorder.timestamp_records = 40
+        recorder.xrun_count = 0
+        recorder.clipped_samples = 0
+        self.cs.audio_proc = recorder
+        self.streamer.recording = False
+        self.streamer.writer_error = "disk write failed"
+
+        self._run_one_command("STOP")
+
+        self.streamer.stop_recording.assert_called_once_with()
+        recorder.terminate.assert_called_once_with()
+        recorder.wait.assert_called_once_with(timeout=2)
+        assert self.cs.audio_proc is None
+
     def test_stop_sends_response(self):
         self.cs.recording_flag = True
         self.rep.recv_string.side_effect = ["STOP", KeyboardInterrupt]
@@ -1117,6 +1135,34 @@ class TestUsbResetArducam:
              ))):
             result = self.cs._usb_reset_arducam()
         assert result is False
+
+
+class TestStartupUsbReset:
+    def setup_method(self):
+        zmq_mock, _, _, _ = _make_zmq_mock()
+        streamer = _make_streamer_mock()
+        self.cs = _load_camera_service(zmq_mock, streamer)
+
+    def test_successful_reset_waits_for_video_device(self):
+        with patch.object(self.cs, '_usb_reset_arducam', return_value=True) as reset, \
+             patch.object(self.cs, '_wait_for_video_device', return_value=True) as wait:
+            assert self.cs._reset_camera_before_initial_open() is True
+
+        reset.assert_called_once_with()
+        wait.assert_called_once_with('/dev/video0')
+
+    def test_failed_reset_continues_without_wait(self):
+        with patch.object(self.cs, '_usb_reset_arducam', return_value=False), \
+             patch.object(self.cs, '_wait_for_video_device') as wait:
+            assert self.cs._reset_camera_before_initial_open() is False
+
+        wait.assert_not_called()
+
+    def test_missing_device_after_reset_is_fatal(self):
+        with patch.object(self.cs, '_usb_reset_arducam', return_value=True), \
+             patch.object(self.cs, '_wait_for_video_device', return_value=False), \
+             pytest.raises(RuntimeError, match="initialen USB-Reset"):
+            self.cs._reset_camera_before_initial_open()
 
 
 # ===========================================================================

@@ -44,6 +44,15 @@ Raspberry Pi 5 unterstützt USB-Massenspeicher als Bootmedium. Das Tool setzt `u
 
 Bei jedem späteren Boot wird die durch `fake-hwclock` fortgeschriebene Uhrzeit geladen. Ist in diesem Moment Internet erreichbar, gleicht ein auf 15 Sekunden begrenzter Einmaldienst die Uhr ab. Dieser Dienst läuft zwingend vor den Kamera-Diensten und endet anschließend. Ohne Internet wird der Abgleich übersprungen. Es existieren weder ein Zeitabgleich-Timer noch ein späterer Wiederholungsversuch während des Aufnahmebetriebs. TRIM läuft ebenfalls nur in diesem Boot-Schritt. Automatische APT-, TRIM-, Logrotate-, Man-DB-, Dateisystemprüfungs- und temporäre Aufräumtimer sind deaktiviert; `cron` wird nicht gestartet.
 
+Der Boot-Schritt begrenzt außerdem die maximale CPU-Frequenz auf 1,5 GHz. Auf
+beiden produktiven Pis erzeugte ein Vierkern-Lasttest bei 2,4 GHz reproduzierbar
+Kernel-Unterspannung; gleichzeitig verlor der UVC-Treiber Teile des
+MJPEG-Datenstroms. Derselbe Test blieb mit 1,5 GHz auf beiden Geräten ohne
+Unterspannung, Sequenzverlust oder ungültiges MJPEG-Frame. Der
+`ondemand`-Governor bleibt aktiv, die Begrenzung verhindert nur die nicht stabil
+versorgten Boost-Spitzen. Sie ersetzt kein ausreichend dimensioniertes Netzteil
+und keine einwandfreien Stromkabel.
+
 ## Verhalten während einer Aufnahme
 
 Es werden bei Aufnahmebeginn keine Systemdienste dynamisch beendet und danach wieder gestartet. Die nicht benötigten periodischen Arbeiten sind dauerhaft deaktiviert und können deshalb gar nicht erst in eine Aufnahme hineinlaufen. Dadurch entstehen keine zusätzlichen Start-/Stopp-Übergänge im Aufnahmebetrieb.
@@ -159,7 +168,9 @@ Die Aufnahmen liegen unter `/srv/kaderblick/recordings` und werden durch den Sha
 
 Folgende frühere Vorschläge werden für das produktive Image nicht gesetzt:
 
-- `arm_freq=1800` und `gpu_freq=250`: keine belastbare Performanceverbesserung für den Pi 5; 1800 MHz läge unter seinem regulären CPU-Takt.
+- `arm_freq=1800` und `gpu_freq=250`: Die Boot-Takte werden nicht fest
+  überschrieben. Stattdessen setzt der gemessene Boot-Preflight ausschließlich
+  die CPU-Obergrenze auf 1,5 GHz; der dynamische `ondemand`-Governor bleibt aktiv.
 - `over_voltage=-2`: Undervolting ohne Messung kann USB- und Aufnahmestabilität verschlechtern.
 - `commit=600`: vergrößert bei Stromausfall das mögliche Datenverlustfenster erheblich.
 - synchrones `discard`: zusätzliche synchrone SSD-Arbeit während einer Aufnahme wird vermieden.

@@ -7,6 +7,7 @@ import json
 import fcntl
 import struct
 import glob as _glob
+import queue
 from datetime import datetime
 import subprocess
 from v4l2_mjpg_stream import V4L2MJPGStreamer
@@ -52,6 +53,72 @@ _device_reset_in_progress = False
 # Originalframes unverändert durch; auf dem Pi wird weder dekodiert noch erneut
 # komprimiert. Das Event dient nur als sichtbarer Betriebszustand für Clients.
 _stream_active = threading.Event()
+
+# Diagnoseereignisse werden aus dem zeitkritischen Capture-Thread nur in eine
+# Queue gestellt. Ein eigener Thread schreibt sie als JSONL dauerhaft weg.
+_health_event_queue = queue.Queue(maxsize=10_000)
+_health_log_stop = threading.Event()
+_health_log_drop_count = 0
+current_health_log_filename = None
+GLOBAL_HEALTH_LOG_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "logs", "camera_health.jsonl"
+)
+HEALTH_LOG_MAX_BYTES = 10 * 1024 * 1024
+HEALTH_LOG_BACKUPS = 5
+
+
+def _rotate_health_log(path):
+    if not os.path.exists(path) or os.path.getsize(path) < HEALTH_LOG_MAX_BYTES:
+        return
+    oldest = f"{path}.{HEALTH_LOG_BACKUPS}"
+    if os.path.exists(oldest):
+        os.remove(oldest)
+    for index in range(HEALTH_LOG_BACKUPS - 1, 0, -1):
+        source = f"{path}.{index}"
+        if os.path.exists(source):
+            os.replace(source, f"{path}.{index + 1}")
+    os.replace(path, f"{path}.1")
+
+
+def _append_health_event(path, event):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    _rotate_health_log(path)
+    with open(path, "a", encoding="utf-8") as log_file:
+        log_file.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def health_event_callback(event):
+    """Queue-only Callback; blockiert weder V4L2-Capture noch den Writer."""
+    global _health_log_drop_count
+    queued_event = dict(event)
+    recording_log = current_health_log_filename
+    if recording_log:
+        queued_event["recording_health_log"] = os.path.basename(recording_log)
+    try:
+        _health_event_queue.put_nowait((queued_event, recording_log))
+    except queue.Full:
+        _health_log_drop_count += 1
+        if _health_log_drop_count == 1 or _health_log_drop_count % 100 == 0:
+            logging.error(
+                "[HEALTH LOG] Queue voll; %d Diagnoseereignis(se) nicht protokolliert",
+                _health_log_drop_count,
+            )
+
+
+def health_event_logger():
+    while not _health_log_stop.is_set() or not _health_event_queue.empty():
+        try:
+            event, recording_log = _health_event_queue.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        try:
+            _append_health_event(GLOBAL_HEALTH_LOG_FILE, event)
+            if recording_log:
+                _append_health_event(recording_log, event)
+        except Exception as error:
+            logging.error("[HEALTH LOG] Diagnoseereignis konnte nicht geschrieben werden: %s", error)
+        finally:
+            _health_event_queue.task_done()
 
 # Persistenz der Auflösung/FPS über Neustarts hinweg
 RESOLUTION_CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "resolution_config.json")
@@ -145,10 +212,24 @@ def _stop_raw_stream():
     logging.info("[STREAM] Original-MJPEG-Livestream deaktiviert.")
 
 
+def _reset_camera_before_initial_open() -> bool:
+    """Bereinigt den instabilen UVC-Zustand nach einem vollständigen Einschalten."""
+    logging.info("[STARTUP] Setze Arducam vor dem ersten Streamstart per USB zurück.")
+    if not _usb_reset_arducam():
+        logging.warning("[STARTUP] USB-Reset nicht möglich; versuche direkten Kamerastart.")
+        return False
+    if not _wait_for_video_device('/dev/video0'):
+        raise RuntimeError("Arducam ist nach dem initialen USB-Reset nicht verfügbar")
+    logging.info("[STARTUP] Arducam nach USB-Reset wieder verfügbar.")
+    return True
+
+
 # Streamer-Objekt initialisieren (letzte Auflösung/FPS aus Config wiederherstellen)
+_reset_camera_before_initial_open()
 _res_cfg = _load_resolution_config()
 streamer = V4L2MJPGStreamer(device='/dev/video0', width=_res_cfg["width"], height=_res_cfg["height"], fps=_res_cfg["fps"])
 streamer.camera_fps = _res_cfg["camera_fps"]
+streamer.set_health_event_callback(health_event_callback)
 # Letzte bekannte gute Auflösung – für Watchdog-Fallback bei wiederholten Fehlstarts
 _last_known_good_res: dict | None = None
 try:
@@ -173,6 +254,75 @@ current_audio_filename = None
 current_meta_filename = None
 
 logging.info("[camera_service] Service bereit und wartet auf Kommandos...")
+
+
+def _finalize_recording_session(stop_video=True):
+    """Schließt Video, Sidecar und Audio auch nach einem asynchronen Fehler."""
+    global audio_proc, current_video_filename, current_audio_filename, current_meta_filename
+    global current_health_log_filename
+
+    writer_failed = isinstance(getattr(streamer, "writer_error", None), str)
+    if stop_video and (streamer.recording or writer_failed):
+        try:
+            streamer.stop_recording()
+        except Exception as e:
+            logging.warning(f"Videoaufnahme konnte nicht sauber beendet werden: {e}")
+
+    if current_meta_filename and os.path.exists(current_meta_filename):
+        try:
+            with open(current_meta_filename, 'r') as mf:
+                meta = json.load(mf)
+            meta["ended_at"] = datetime.now().isoformat()
+            meta["health_log"] = (
+                os.path.basename(current_health_log_filename)
+                if current_health_log_filename else None
+            )
+            meta["health_summary"] = {
+                "events": int(getattr(streamer, "health_event_count", 0)),
+                "v4l2_sequence_gaps": int(getattr(streamer, "sequence_gaps", 0)),
+                "v4l2_sequence_frames_lost": int(getattr(streamer, "sequence_frames_lost", 0)),
+                "v4l2_sequence_resets": int(getattr(streamer, "sequence_resets", 0)),
+                "v4l2_timestamp_gaps": int(getattr(streamer, "timestamp_gaps", 0)),
+                "v4l2_buffer_errors": int(getattr(streamer, "buffer_errors", 0)),
+                "invalid_mjpeg_frames": int(getattr(streamer, "invalid_mjpeg_frames", 0)),
+                "writer_queue_drops": int(getattr(streamer, "writer_queue_drops", 0)),
+                "writer_error": (
+                    streamer.writer_error
+                    if isinstance(getattr(streamer, "writer_error", None), str) else None
+                ),
+                "capture_error": (
+                    streamer.capture_error
+                    if isinstance(getattr(streamer, "capture_error", None), str) else None
+                ),
+                "health_log_drops": _health_log_drop_count,
+            }
+            if writer_failed:
+                meta["error"] = streamer.writer_error
+            serialized_meta = json.dumps(meta)
+            with open(current_meta_filename, 'w') as mf:
+                mf.write(serialized_meta)
+        except Exception as e:
+            logging.warning(f"Konnte JSON-Sidecar nicht aktualisieren: {e}")
+
+    if audio_proc and audio_proc.poll() is None:
+        audio_proc.terminate()
+        try:
+            audio_proc.wait(timeout=2)
+            logging.info(
+                "Audioaufnahme gestoppt "
+                f"(frames={audio_proc.frames_written}, "
+                f"timestamps={audio_proc.timestamp_records}, "
+                f"xruns={audio_proc.xrun_count}, "
+                f"clipped_samples={audio_proc.clipped_samples})."
+            )
+        except Exception as e:
+            logging.warning(f"Audioaufnahme konnte nicht sauber beendet werden: {e}")
+
+    audio_proc = None
+    current_video_filename = None
+    current_audio_filename = None
+    current_meta_filename = None
+    current_health_log_filename = None
 
 
 def _restart_capture_thread():
@@ -254,9 +404,9 @@ def capture_watchdog():
             logging.error("[WATCHDOG] Capture-Thread ist nicht mehr am Leben!")
             error_since = None
             with recording_lock:
-                if streamer.recording:
+                if streamer.recording or audio_proc is not None:
                     logging.error("[WATCHDOG] Aufnahme war aktiv – Aufnahme wird als FEHLGESCHLAGEN markiert.")
-                    streamer.recording = False
+                    _finalize_recording_session()
             _maybe_apply_fallback(consecutive_failed_restarts)
             try:
                 _full_device_restart()
@@ -268,6 +418,9 @@ def capture_watchdog():
             if error_since is None:
                 error_since = time.monotonic()
                 logging.warning(f"[WATCHDOG] capture_error seit {time.strftime('%H:%M:%S')}: {streamer.capture_error}")
+                with recording_lock:
+                    if streamer.recording or audio_proc is not None:
+                        _finalize_recording_session()
             elif time.monotonic() - error_since >= MAX_ERROR_SECONDS:
                 logging.error(
                     f"[WATCHDOG] Capture-Fehler seit {int(time.monotonic() - error_since)}s – "
@@ -322,6 +475,7 @@ def audio_monitor():
 
 def handle_commands():
     global audio_proc, audio_error_msg, current_video_filename, current_audio_filename, current_meta_filename
+    global current_health_log_filename
     while True:
         try:
             msg = rep_socket.recv_string()
@@ -374,15 +528,30 @@ def handle_commands():
                         video_filename = os.path.join(recordings_dir, f"aufnahme_{timestamp}.mjpg")
                         audio_filename = os.path.join(recordings_dir, f"aufnahme_{timestamp}.wav")
                         meta_filename = os.path.join(recordings_dir, f"aufnahme_{timestamp}.json")
+                        health_log_filename = os.path.join(
+                            recordings_dir, f"aufnahme_{timestamp}_health.jsonl"
+                        )
                         current_video_filename = video_filename
                         current_audio_filename = audio_filename
                         current_meta_filename = meta_filename
+                        current_health_log_filename = health_log_filename
                         audio_error_msg = None
+
+                        # Auch eine fehlerfreie Aufnahme besitzt damit einen
+                        # eindeutigen, leeren Ereignislog als Nachweis.
+                        try:
+                            open(health_log_filename, "a", encoding="utf-8").close()
+                        except Exception as e:
+                            logging.warning(f"Konnte Health-Log nicht anlegen: {e}")
 
                         # JSON-Sidecar anlegen
                         try:
                             with open(meta_filename, 'w') as mf:
-                                json.dump({"fps": streamer.fps, "started_at": started_at}, mf)
+                                json.dump({
+                                    "fps": streamer.fps,
+                                    "started_at": started_at,
+                                    "health_log": os.path.basename(health_log_filename),
+                                }, mf)
                         except Exception as e:
                             logging.warning(f"Konnte JSON-Sidecar nicht anlegen: {e}")
 
@@ -420,37 +589,9 @@ def handle_commands():
 
             elif msg == "STOP":
                 with recording_lock:
-                    if streamer.recording:
+                    if streamer.recording or audio_proc is not None or current_meta_filename is not None:
                         logging.info("Stoppe Aufnahme...")
-                        streamer.stop_recording()
-                        # JSON-Sidecar mit ended_at ergänzen
-                        if current_meta_filename and os.path.exists(current_meta_filename):
-                            try:
-                                with open(current_meta_filename, 'r') as mf:
-                                    meta = json.load(mf)
-                                meta["ended_at"] = datetime.now().isoformat()
-                                with open(current_meta_filename, 'w') as mf:
-                                    json.dump(meta, mf)
-                            except Exception as e:
-                                logging.warning(f"Konnte JSON-Sidecar nicht aktualisieren: {e}")
-                        # Audioaufnahme stoppen
-                        if audio_proc and audio_proc.poll() is None:
-                            audio_proc.terminate()
-                            try:
-                                audio_proc.wait(timeout=2)
-                                logging.info(
-                                    "Audioaufnahme gestoppt "
-                                    f"(frames={audio_proc.frames_written}, "
-                                    f"timestamps={audio_proc.timestamp_records}, "
-                                    f"xruns={audio_proc.xrun_count}, "
-                                    f"clipped_samples={audio_proc.clipped_samples})."
-                                )
-                            except Exception:
-                                logging.warning("Audioaufnahme konnte nicht sauber beendet werden.")
-                        audio_proc = None
-                        current_video_filename = None
-                        current_audio_filename = None
-                        current_meta_filename = None
+                        _finalize_recording_session()
                     else:
                         logging.info("Aufnahme war nicht aktiv.")
                 rep_socket.send_string("OK")
@@ -544,6 +685,35 @@ def handle_commands():
                     audio_running = audio_proc is not None and audio_proc.poll() is None
                     audio_exit_code = audio_proc.poll() if audio_proc is not None else None
 
+                    health_issues = []
+                    health_status = "ok"
+                    if not capture_thread_alive:
+                        health_issues.append("Capture-Thread läuft nicht")
+                        health_status = "error"
+                    if capture_error:
+                        health_issues.append(str(capture_error))
+                        health_status = "error"
+                    if getattr(streamer, "writer_error", None):
+                        health_issues.append(str(streamer.writer_error))
+                        health_status = "error"
+                    if audio_error_msg:
+                        health_issues.append(str(audio_error_msg))
+                        health_status = "error"
+                    if last_frame_age is not None and last_frame_age > 2.0:
+                        health_issues.append(f"Letztes Kameraframe ist {last_frame_age:.1f}s alt")
+                        health_status = "error"
+                    warning_counters = {
+                        "V4L2-Sequenzsprünge": int(getattr(streamer, "sequence_gaps", 0)),
+                        "V4L2-Pufferfehler": int(getattr(streamer, "buffer_errors", 0)),
+                        "ungültige MJPEG-Frames": int(getattr(streamer, "invalid_mjpeg_frames", 0)),
+                        "Writer-Queue-Drops": int(getattr(streamer, "writer_queue_drops", 0)),
+                    }
+                    for label, count in warning_counters.items():
+                        if count:
+                            health_issues.append(f"{label}: {count}")
+                            if health_status == "ok":
+                                health_status = "warning"
+
                     status = {
                         "recording": actually_recording,
                         "recording_flag": streamer.recording,
@@ -552,13 +722,23 @@ def handle_commands():
                         "frames_written": frames_written,
                         "v4l2_sequence_gaps": int(getattr(streamer, "sequence_gaps", 0)),
                         "v4l2_sequence_frames_lost": int(getattr(streamer, "sequence_frames_lost", 0)),
+                        "v4l2_sequence_resets": int(getattr(streamer, "sequence_resets", 0)),
                         "v4l2_timestamp_gaps": int(getattr(streamer, "timestamp_gaps", 0)),
                         "v4l2_buffer_errors": int(getattr(streamer, "buffer_errors", 0)),
+                        "invalid_mjpeg_frames": int(getattr(streamer, "invalid_mjpeg_frames", 0)),
                         "v4l2_allocated_buffers": int(getattr(streamer, "allocated_buffers", 0)),
                         "max_buffer_hold_ms": round(float(getattr(streamer, "max_buffer_hold_ms", 0.0)), 3),
                         "max_write_ms": round(float(getattr(streamer, "max_write_ms", 0.0)), 3),
                         "writer_queue_max_depth": int(getattr(streamer, "writer_queue_max_depth", 0)),
                         "writer_queue_drops": int(getattr(streamer, "writer_queue_drops", 0)),
+                        "health_event_count": int(getattr(streamer, "health_event_count", 0)),
+                        "health_log_drops": int(_health_log_drop_count),
+                        "health_log_file": (
+                            os.path.basename(current_health_log_filename)
+                            if current_health_log_filename else None
+                        ),
+                        "health_status": health_status,
+                        "health_issues": health_issues,
                         "writer_error": (
                             streamer.writer_error
                             if isinstance(getattr(streamer, "writer_error", None), str)
@@ -600,6 +780,12 @@ def handle_commands():
 
 
 def main():
+    health_logger_thread = threading.Thread(
+        target=health_event_logger, name="camera-health-log", daemon=True
+    )
+    health_logger_thread.start()
+    logging.info("Health-Event-Logger gestartet: %s", GLOBAL_HEALTH_LOG_FILE)
+
     cmd_thread = threading.Thread(target=handle_commands, daemon=True)
     cmd_thread.start()
     logging.info("Kommando-Thread gestartet.")
@@ -626,10 +812,12 @@ def main():
     except KeyboardInterrupt:
         logging.info("Beende Service...")
         with recording_lock:
-            if streamer.recording:
+            if streamer.recording or audio_proc is not None:
                 logging.info("Stoppe laufende Aufnahme beim Beenden.")
-                streamer.stop_recording()
+                _finalize_recording_session()
         streamer.stop()
+        _health_log_stop.set()
+        health_logger_thread.join(timeout=3)
         rep_socket.close()
         context.term()
         logging.info("Service sauber beendet.")

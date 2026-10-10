@@ -489,13 +489,20 @@ def get_status():
                     "frames_written": camera_status.get("frames_written"),
                     "v4l2_sequence_gaps": camera_status.get("v4l2_sequence_gaps"),
                     "v4l2_sequence_frames_lost": camera_status.get("v4l2_sequence_frames_lost"),
+                    "v4l2_sequence_resets": camera_status.get("v4l2_sequence_resets"),
                     "v4l2_timestamp_gaps": camera_status.get("v4l2_timestamp_gaps"),
                     "v4l2_buffer_errors": camera_status.get("v4l2_buffer_errors"),
+                    "invalid_mjpeg_frames": camera_status.get("invalid_mjpeg_frames"),
                     "v4l2_allocated_buffers": camera_status.get("v4l2_allocated_buffers"),
                     "max_buffer_hold_ms": camera_status.get("max_buffer_hold_ms"),
                     "max_write_ms": camera_status.get("max_write_ms"),
                     "writer_queue_max_depth": camera_status.get("writer_queue_max_depth"),
                     "writer_queue_drops": camera_status.get("writer_queue_drops"),
+                    "health_event_count": camera_status.get("health_event_count"),
+                    "health_status": camera_status.get("health_status"),
+                    "health_issues": camera_status.get("health_issues", []),
+                    "health_log_file": camera_status.get("health_log_file"),
+                    "health_log_drops": camera_status.get("health_log_drops"),
                     "writer_error": camera_status.get("writer_error"),
                     "last_frame_age_s": camera_status.get("last_frame_age_s"),
                     "capture_error": camera_status.get("capture_error"),
@@ -559,6 +566,16 @@ def get_status():
 @app.get("/system/info")
 def system_info():
     info: dict = {}
+
+    # Die UI erhält Ressourcen- und Kamera-Gesundheitsdaten in derselben
+    # zeitlichen Stichprobe. Die Zähler stammen direkt aus dem Capture-/Writer-
+    # Prozess und zeigen daher auch Fehler, die CPU/RAM/Temperatur nicht abbilden.
+    status = get_status()
+    info["camera_health"] = {
+        **status.get("camera_service", {}),
+        "recording_active": status.get("recording", {}).get("active", False),
+        "recording_session": status.get("recording", {}).get("session_dir"),
+    }
 
     temps = psutil.sensors_temperatures()
     cpu_thermal = temps.get("cpu_thermal", [])

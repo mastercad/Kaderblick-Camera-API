@@ -504,6 +504,16 @@ class TestGetStatus:
         r = client.get("/status")
         assert "servo_angle" in r.json()["hardware"]
 
+    def test_forwards_invalid_frame_and_sequence_reset_counters(self):
+        _zmq_rep_returns(_make_status_json(
+            invalid_mjpeg_frames=2,
+            v4l2_sequence_resets=1,
+        ))
+        camera = client.get("/status").json()["camera_service"]
+
+        assert camera["invalid_mjpeg_frames"] == 2
+        assert camera["v4l2_sequence_resets"] == 1
+
 
 # ===========================================================================
 # GET /system/info
@@ -529,6 +539,19 @@ class TestSystemInfo:
     def test_contains_output_files(self):
         r = client.get("/system/info")
         assert "output_files" in r.json()
+
+    def test_contains_camera_health_from_capture_service(self):
+        _zmq_rep_returns(_make_status_json(
+            health_status="warning",
+            health_event_count=3,
+            v4l2_sequence_frames_lost=7,
+        ))
+
+        health = client.get("/system/info").json()["camera_health"]
+
+        assert health["health_status"] == "warning"
+        assert health["health_event_count"] == 3
+        assert health["v4l2_sequence_frames_lost"] == 7
 
     def test_disk_space_error_shown_when_set(self):
         with patch.object(fastapi_app.disk_space_error, "is_set", return_value=True):
