@@ -265,8 +265,6 @@ _last_preview_time = 0.0
 
 def preview_callback_mjpg(frame_bytes):
     global _last_preview_time
-    if not _stream_active.is_set():
-        return
     now = time.monotonic()
     if now - _last_preview_time < 1.0 / PREVIEW_MAX_FPS:
         return

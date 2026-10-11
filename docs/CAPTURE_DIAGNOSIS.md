@@ -305,10 +305,10 @@ Häufigkeitsunterschied zum isolierten Captureprozess.
 
 ### API-/Preview-Subscriber an und aus
 
-Der API-Prozess startet beim Import dauerhaft einen ZMQ-Subscriber. Gleichzeitig
-sendete `preview_callback_mjpg()` bisher unabhängig von `stream_active` bis zu
-drei vollständige 4K-JPEGs pro Sekunde. Um diesen realen Logikfehler von der
-UVC-Ursache zu trennen, liefen pro Kamera fünf neue Streams mit je einer
+Der API-Prozess startet beim Import dauerhaft einen ZMQ-Subscriber. Die zur
+Kameraausrichtung benötigte Preview sendet unabhängig vom separat schaltbaren
+Livestream bis zu drei vollständige 4K-JPEGs pro Sekunde. Um den Subscriber
+von der UVC-Ursache zu trennen, liefen pro Kamera fünf neue Streams mit je einer
 60-Sekunden-Phase bei gestopptem und gestartetem API-Prozess; die Reihenfolge
 war zwischen den Kameras vertauscht.
 
@@ -317,12 +317,8 @@ API-an-Phasen enthielten zusammen 69 Error-Payloads und zehn ungültige Header;
 eine API-aus-Phase enthielt neun Error-Payloads und vier ungültige Header.
 Damit ist der Subscriber keine notwendige Bedingung der Bursts. Drei
 Burstphasen reichen nicht aus, um einen Häufigkeitsunterschied zwischen den
-Zuständen zu belegen.
-
-Unabhängig davon wurde der Logikfehler behoben: Bei
-`stream_active == false` kehrt der Preview-Callback nun vor Zeitmessung und
-ZMQ-Send sofort zurück. Das reduziert die unnötige Bildauslieferung, wird aber
-nicht als Behebung der UVC-Payloadfehler bewertet.
+Zuständen zu belegen. Preview und Livestream bleiben funktional getrennt; das
+Livestream-Flag darf die Preview nicht deaktivieren.
 
 ## Kernelinterne UVC-Paketstatistik
 
