@@ -1,5 +1,20 @@
 # Projektregeln
 
+## Laufende Capture-Diagnose
+
+Vor Aussagen oder Änderungen zu Frameverlusten, beschädigten MJPEG-Puffern,
+V4L2, UVC, USB, Preview oder Aufnahme zuerst
+[`docs/CAPTURE_DIAGNOSIS.md`](docs/CAPTURE_DIAGNOSIS.md) vollständig lesen.
+Der dort dokumentierte Belegstand, die bereits ausgeschlossenen Erklärungen
+und die offenen A/B-Tests sind verbindlich. Bereits erledigte Prüfungen nicht
+ohne neue Evidenz wiederholen und offene Hypothesen nicht als Ursache
+darstellen. Einzelereignisse, einzelne Vorher-/Nachher-Läufe und ein einmaliger
+Tausch zwischen den Kameras dürfen weder als Referenz noch als Ursachen- oder
+Wirksamkeitsbeleg verwendet werden. Wiederholte, alternierende Kreuztests sind
+zulässig; unbekannte Schwankungen zwischen Kameras oder Zeitfenstern dürfen
+dabei nicht dem Testparameter zugerechnet werden. Neue belastbare Erkenntnisse
+in diesem Dokument ergänzen.
+
 ## Nichtinteraktiver SSH-Zugriff auf die Kamera-Pis
 
 Für SSH-Kommandos an `kaderblick@192.168.178.47` und

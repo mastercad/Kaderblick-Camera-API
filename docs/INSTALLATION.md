@@ -1,5 +1,9 @@
 # Installation der Kamera
 
+> Der belegte Stand der laufenden Untersuchung zu V4L2-/MJPEG-Frameverlusten
+> steht in [CAPTURE_DIAGNOSIS.md](CAPTURE_DIAGNOSIS.md). Vor weiteren Änderungen
+> dortige Messwerte, Ausschlüsse und offene Tests berücksichtigen.
+
 Die produktiven Raspberry Pi 5 werden mit dem **Kaderblick Kamera Setup** vorbereitet. Am späteren Einsatzort ist keine Internetverbindung erforderlich.
 
 ## Voraussetzungen
