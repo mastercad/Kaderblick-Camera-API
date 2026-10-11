@@ -418,7 +418,9 @@ class TestCaptureLoopTimeoutLogic:
         s.fd = 42
         # Fake mmap: bytes liefern
         fake_mm = MagicMock()
-        fake_mm.__getitem__ = lambda self, key: b"\xff\xd8\xff\xe0" + b"\x00" * 100  # JPEG-ähnlich
+        fake_mm.__getitem__ = lambda self, key: (
+            b"\xff\xd8\xff\xe0" + b"\x00" * 98 + b"\xff\xd9"
+        )
         s.mmaps = [(fake_mm, 1024)]
         return s
 
@@ -598,6 +600,49 @@ class TestCaptureLoopTimeoutLogic:
         assert qbuf_calls[0] == 1
         preview.assert_not_called()
         enqueue.assert_not_called()
+
+    def test_mjpeg_padding_is_removed_before_recording_and_preview(self):
+        import v4l2 as _v4l2
+
+        s = self._make_streamer_with_mocked_fd()
+        s.running = True
+        padded = b"\xff\xd8payload\xff\xd9" + b"\x00" * 9
+        s.mmaps[0][0].__getitem__ = lambda self, key: padded
+        preview = MagicMock()
+        enqueue = MagicMock()
+        s.set_preview_callback(preview)
+        s._enqueue_record_frame = enqueue
+        select_calls = [0]
+        buf_mock = MagicMock()
+        buf_mock.index = 0
+        buf_mock.bytesused = len(padded)
+        buf_mock.flags = 0
+        buf_mock.sequence = 8
+        buf_mock.timestamp.secs = 1
+        buf_mock.timestamp.usecs = 0
+
+        def fake_select(rlist, wlist, xlist, timeout):
+            select_calls[0] += 1
+            if select_calls[0] == 1:
+                return [s.fd], [], []
+            s.running = False
+            return [], [], []
+
+        with patch("select.select", fake_select), \
+             patch("fcntl.ioctl"), \
+             patch("v4l2.v4l2_buffer", return_value=buf_mock):
+            s._capture_loop()
+
+        expected = b"\xff\xd8payload\xff\xd9"
+        assert enqueue.call_args.args[0] == expected
+        preview.assert_called_once_with(expected)
+        assert s.mjpeg_padding_frames_trimmed == 1
+        assert s.mjpeg_padding_bytes_trimmed == 9
+
+    def test_mjpeg_without_eoi_is_rejected(self):
+        s = V4L2MJPGStreamer()
+
+        assert s._normalize_mjpeg_frame(b"\xff\xd8incomplete") is None
 
 
 class TestSequenceTracking:

@@ -507,11 +507,15 @@ class TestGetStatus:
     def test_forwards_invalid_frame_and_sequence_reset_counters(self):
         _zmq_rep_returns(_make_status_json(
             invalid_mjpeg_frames=2,
+            mjpeg_padding_frames_trimmed=11,
+            mjpeg_padding_bytes_trimmed=4096,
             v4l2_sequence_resets=1,
         ))
         camera = client.get("/status").json()["camera_service"]
 
         assert camera["invalid_mjpeg_frames"] == 2
+        assert camera["mjpeg_padding_frames_trimmed"] == 11
+        assert camera["mjpeg_padding_bytes_trimmed"] == 4096
         assert camera["v4l2_sequence_resets"] == 1
 
     def test_forwards_audio_health_details(self):

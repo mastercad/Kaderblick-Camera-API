@@ -62,6 +62,8 @@ class V4L2MJPGStreamer:
         self.timestamp_gaps = 0
         self.buffer_errors = 0
         self.invalid_mjpeg_frames = 0
+        self.mjpeg_padding_frames_trimmed = 0
+        self.mjpeg_padding_bytes_trimmed = 0
         self.max_buffer_hold_ms = 0.0
         self.max_write_ms = 0.0
         self.writer_queue_max_depth = 0
@@ -223,6 +225,8 @@ class V4L2MJPGStreamer:
         self.timestamp_gaps = 0
         self.buffer_errors = 0
         self.invalid_mjpeg_frames = 0
+        self.mjpeg_padding_frames_trimmed = 0
+        self.mjpeg_padding_bytes_trimmed = 0
         self.max_buffer_hold_ms = 0.0
         self.max_write_ms = 0.0
         self.writer_queue_max_depth = 0
@@ -299,6 +303,8 @@ class V4L2MJPGStreamer:
             f"timestamp_gaps={self.timestamp_gaps}, "
             f"buffer_errors={self.buffer_errors}, "
             f"invalid_mjpeg_frames={self.invalid_mjpeg_frames}, "
+            f"mjpeg_padding_frames_trimmed={self.mjpeg_padding_frames_trimmed}, "
+            f"mjpeg_padding_bytes_trimmed={self.mjpeg_padding_bytes_trimmed}, "
             f"allocated_buffers={self.allocated_buffers}, "
             f"max_buffer_hold_ms={self.max_buffer_hold_ms:.3f}, "
             f"max_write_ms={self.max_write_ms:.3f}, "
@@ -481,6 +487,21 @@ class V4L2MJPGStreamer:
             flush=True,
         )
 
+    def _normalize_mjpeg_frame(self, frame):
+        """Liefert exakt ein vollstaendiges JPEG ohne UVC-Padding oder ``None``."""
+        if len(frame) < 4 or frame[:2] != b'\xff\xd8':
+            return None
+        eoi = frame.rfind(b'\xff\xd9')
+        if eoi < 2:
+            return None
+        jpeg_end = eoi + 2
+        padding_bytes = len(frame) - jpeg_end
+        if padding_bytes > 0:
+            self.mjpeg_padding_frames_trimmed += 1
+            self.mjpeg_padding_bytes_trimmed += padding_bytes
+            return frame[:jpeg_end]
+        return frame
+
     def _capture_loop(self):
         consecutive_timeouts = 0
         MAX_CONSECUTIVE_TIMEOUTS = 10  # 10s ohne Frame → Fehler
@@ -582,22 +603,28 @@ class V4L2MJPGStreamer:
             # Resynchronisierung einen Puffer ohne gesetztes ERROR-Flag, dessen
             # Nutzdaten trotzdem kein JPEG sind. Solche Frames dürfen weder die
             # Aufnahme beenden noch Preview-Clients vergiften.
-            if len(frame) < 2 or frame[:2] != b'\xff\xd8':
+            normalized_frame = self._normalize_mjpeg_frame(frame)
+            if normalized_frame is None:
                 self.invalid_mjpeg_frames += 1
                 prefix = frame[:16].hex()
+                suffix = frame[-16:].hex()
                 self._emit_health_event(
                     "invalid_mjpeg_frame",
-                    "Capture lieferte ein MJPEG-Frame ohne JPEG-SOI",
+                    "Capture lieferte kein vollstaendiges JPEG-Frame",
                     source="capture",
                     sequence=sequence,
                     bytesused=int(buf.bytesused),
                     prefix=prefix,
+                    suffix=suffix,
+                    has_soi=frame[:2] == b'\xff\xd8',
+                    has_eoi=frame.rfind(b'\xff\xd9') >= 2,
                     total=self.invalid_mjpeg_frames,
                 )
                 print(
-                    f"[V4L2-DIAG] Ungültiges MJPEG-Frame verworfen "
+                    f"[V4L2-DIAG] Unvollständiges MJPEG-Frame verworfen "
                     f"(sequence={sequence}, bytesused={buf.bytesused}, "
-                    f"prefix={prefix}, total={self.invalid_mjpeg_frames})",
+                    f"prefix={prefix}, suffix={suffix}, "
+                    f"total={self.invalid_mjpeg_frames})",
                     flush=True,
                 )
                 try:
@@ -606,6 +633,8 @@ class V4L2MJPGStreamer:
                     self._handle_qbuf_error(e)
                     break
                 continue
+
+            frame = normalized_frame
 
             self._enqueue_record_frame(
                 frame,

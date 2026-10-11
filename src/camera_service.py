@@ -355,6 +355,12 @@ def _finalize_recording_session(stop_video=True):
                 "v4l2_timestamp_gaps": int(getattr(streamer, "timestamp_gaps", 0)),
                 "v4l2_buffer_errors": int(getattr(streamer, "buffer_errors", 0)),
                 "invalid_mjpeg_frames": int(getattr(streamer, "invalid_mjpeg_frames", 0)),
+                "mjpeg_padding_frames_trimmed": int(
+                    getattr(streamer, "mjpeg_padding_frames_trimmed", 0)
+                ),
+                "mjpeg_padding_bytes_trimmed": int(
+                    getattr(streamer, "mjpeg_padding_bytes_trimmed", 0)
+                ),
                 "writer_queue_drops": int(getattr(streamer, "writer_queue_drops", 0)),
                 "writer_error": (
                     streamer.writer_error
@@ -855,6 +861,12 @@ def handle_commands():
                         "v4l2_timestamp_gaps": int(getattr(streamer, "timestamp_gaps", 0)),
                         "v4l2_buffer_errors": int(getattr(streamer, "buffer_errors", 0)),
                         "invalid_mjpeg_frames": int(getattr(streamer, "invalid_mjpeg_frames", 0)),
+                        "mjpeg_padding_frames_trimmed": int(
+                            getattr(streamer, "mjpeg_padding_frames_trimmed", 0)
+                        ),
+                        "mjpeg_padding_bytes_trimmed": int(
+                            getattr(streamer, "mjpeg_padding_bytes_trimmed", 0)
+                        ),
                         "v4l2_allocated_buffers": int(getattr(streamer, "allocated_buffers", 0)),
                         "max_buffer_hold_ms": round(float(getattr(streamer, "max_buffer_hold_ms", 0.0)), 3),
                         "max_write_ms": round(float(getattr(streamer, "max_write_ms", 0.0)), 3),

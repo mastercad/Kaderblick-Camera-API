@@ -537,6 +537,12 @@ def get_status():
                     "v4l2_timestamp_gaps": camera_status.get("v4l2_timestamp_gaps"),
                     "v4l2_buffer_errors": camera_status.get("v4l2_buffer_errors"),
                     "invalid_mjpeg_frames": camera_status.get("invalid_mjpeg_frames"),
+                    "mjpeg_padding_frames_trimmed": camera_status.get(
+                        "mjpeg_padding_frames_trimmed"
+                    ),
+                    "mjpeg_padding_bytes_trimmed": camera_status.get(
+                        "mjpeg_padding_bytes_trimmed"
+                    ),
                     "v4l2_allocated_buffers": camera_status.get("v4l2_allocated_buffers"),
                     "max_buffer_hold_ms": camera_status.get("max_buffer_hold_ms"),
                     "max_write_ms": camera_status.get("max_write_ms"),
