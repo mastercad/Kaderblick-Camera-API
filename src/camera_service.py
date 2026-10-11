@@ -59,12 +59,22 @@ _stream_active = threading.Event()
 _health_event_queue = queue.Queue(maxsize=10_000)
 _health_log_stop = threading.Event()
 _health_log_drop_count = 0
+_health_log_event_count = 0
 current_health_log_filename = None
 GLOBAL_HEALTH_LOG_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "logs", "camera_health.jsonl"
 )
 HEALTH_LOG_MAX_BYTES = 10 * 1024 * 1024
 HEALTH_LOG_BACKUPS = 5
+
+# vcgencmd get_throttled: Bits 0..3 beschreiben den aktuellen Zustand.
+POWER_CURRENT_UNDERVOLTAGE = 1 << 0
+POWER_CURRENT_FREQ_CAPPED = 1 << 1
+POWER_CURRENT_THROTTLED = 1 << 2
+POWER_CURRENT_SOFT_TEMP_LIMIT = 1 << 3
+POWER_CURRENT_MASK = 0xF
+_power_current_flags = 0
+_power_event_count = 0
 
 
 def _rotate_health_log(path):
@@ -89,13 +99,14 @@ def _append_health_event(path, event):
 
 def health_event_callback(event):
     """Queue-only Callback; blockiert weder V4L2-Capture noch den Writer."""
-    global _health_log_drop_count
+    global _health_log_drop_count, _health_log_event_count
     queued_event = dict(event)
     recording_log = current_health_log_filename
     if recording_log:
         queued_event["recording_health_log"] = os.path.basename(recording_log)
     try:
         _health_event_queue.put_nowait((queued_event, recording_log))
+        _health_log_event_count += 1
     except queue.Full:
         _health_log_drop_count += 1
         if _health_log_drop_count == 1 or _health_log_drop_count % 100 == 0:
@@ -103,6 +114,65 @@ def health_event_callback(event):
                 "[HEALTH LOG] Queue voll; %d Diagnoseereignis(se) nicht protokolliert",
                 _health_log_drop_count,
             )
+
+
+def _parse_throttled_flags(output: str) -> int:
+    value = output.strip().split("=", 1)[-1]
+    return int(value, 0)
+
+
+def _power_issue_names(flags: int) -> list[str]:
+    names = []
+    if flags & POWER_CURRENT_UNDERVOLTAGE:
+        names.append("Unterspannung")
+    if flags & POWER_CURRENT_FREQ_CAPPED:
+        names.append("CPU-Frequenz begrenzt")
+    if flags & POWER_CURRENT_THROTTLED:
+        names.append("System gedrosselt")
+    if flags & POWER_CURRENT_SOFT_TEMP_LIMIT:
+        names.append("Temperaturlimit aktiv")
+    return names
+
+
+def _read_current_power_flags() -> int:
+    result = subprocess.run(
+        ["vcgencmd", "get_throttled"],
+        capture_output=True,
+        text=True,
+        timeout=2,
+        check=True,
+    )
+    return _parse_throttled_flags(result.stdout) & POWER_CURRENT_MASK
+
+
+def power_monitor():
+    """Protokolliert nur neu auftretende aktuelle Versorgungs-/Drosselprobleme."""
+    global _power_current_flags, _power_event_count
+    previous_flags = 0
+    while not _health_log_stop.is_set():
+        try:
+            current_flags = _read_current_power_flags()
+            _power_current_flags = current_flags
+            new_flags = current_flags & ~previous_flags
+            if new_flags:
+                _power_event_count += 1
+                names = _power_issue_names(new_flags)
+                health_event_callback({
+                    "timestamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+                    "monotonic_ns": time.monotonic_ns(),
+                    "type": "power_throttling",
+                    "severity": "error",
+                    "message": "Stromversorgungsproblem: " + ", ".join(names),
+                    "recording": bool(streamer.recording),
+                    "flags": current_flags,
+                    "new_flags": new_flags,
+                    "issues": names,
+                    "event_count": _power_event_count,
+                })
+            previous_flags = current_flags
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
+            logging.debug("Power-Status konnte nicht gelesen werden: %s", error)
+        _health_log_stop.wait(2.0)
 
 
 def health_event_logger():
@@ -471,6 +541,15 @@ def audio_monitor():
                     if detail:
                         audio_error_msg += f": {detail}"
                     logging.error(f"[AUDIO MONITOR] {audio_error_msg}")
+                    health_event_callback({
+                        "timestamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+                        "monotonic_ns": time.monotonic_ns(),
+                        "type": "audio_capture_stopped",
+                        "severity": "error",
+                        "message": audio_error_msg,
+                        "recording": bool(streamer.recording),
+                        "exit_code": rc,
+                    })
 
 
 def handle_commands():
@@ -565,19 +644,45 @@ def handle_commands():
                                 audio_proc = TimestampedAudioRecorder(
                                     audio_device,
                                     audio_filename,
+                                    health_event_callback=health_event_callback,
                                 ).start()
                             except Exception as e:
                                 audio_error_msg = f"Audioaufnahme konnte nicht starten: {e}"
                                 logging.error(f"[START] {audio_error_msg}")
+                                health_event_callback({
+                                    "timestamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+                                    "monotonic_ns": time.monotonic_ns(),
+                                    "type": "audio_start_failed",
+                                    "severity": "error",
+                                    "message": audio_error_msg,
+                                    "recording": True,
+                                })
                                 audio_proc = None
                             if audio_proc is not None and not audio_proc.wait_for_first_timestamp(2.0):
                                 audio_error_msg = "Kein ALSA-Zeitstempel innerhalb von 2 Sekunden"
                                 logging.error(f"[START] {audio_error_msg}")
+                                health_event_callback({
+                                    "timestamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+                                    "monotonic_ns": time.monotonic_ns(),
+                                    "type": "audio_start_timeout",
+                                    "severity": "error",
+                                    "message": audio_error_msg,
+                                    "recording": True,
+                                })
                                 audio_proc.terminate()
                                 audio_proc.wait(timeout=2)
                                 audio_proc = None
                         else:
-                            logging.error("USB-Audio-Device nicht gefunden! Keine Audioaufnahme.")
+                            audio_error_msg = "USB-Audio-Gerät nicht gefunden; keine Audioaufnahme"
+                            logging.error(audio_error_msg)
+                            health_event_callback({
+                                "timestamp": datetime.now().astimezone().isoformat(timespec="milliseconds"),
+                                "monotonic_ns": time.monotonic_ns(),
+                                "type": "audio_device_missing",
+                                "severity": "error",
+                                "message": audio_error_msg,
+                                "recording": True,
+                            })
 
                         # Videoaufnahme starten
                         streamer.start_recording(video_filename, started_at=started_at)
@@ -684,6 +789,20 @@ def handle_commands():
 
                     audio_running = audio_proc is not None and audio_proc.poll() is None
                     audio_exit_code = audio_proc.poll() if audio_proc is not None else None
+                    audio_progress_age = None
+                    if audio_proc is not None:
+                        last_audio_progress = getattr(audio_proc, "last_progress_monotonic", None)
+                        if isinstance(last_audio_progress, (int, float)):
+                            audio_progress_age = round(
+                                max(0.0, time.monotonic() - last_audio_progress), 1
+                            )
+                    audio_stalled = (
+                        audio_running
+                        and audio_progress_age is not None
+                        and audio_progress_age > 2.0
+                    )
+                    if audio_stalled:
+                        audio_running = False
 
                     health_issues = []
                     health_status = "ok"
@@ -699,8 +818,18 @@ def handle_commands():
                     if audio_error_msg:
                         health_issues.append(str(audio_error_msg))
                         health_status = "error"
+                    if audio_stalled:
+                        health_issues.append(
+                            f"ALSA liefert seit {audio_progress_age:.1f}s keine Audiodaten"
+                        )
+                        health_status = "error"
                     if last_frame_age is not None and last_frame_age > 2.0:
                         health_issues.append(f"Letztes Kameraframe ist {last_frame_age:.1f}s alt")
+                        health_status = "error"
+                    if _power_current_flags:
+                        health_issues.append(
+                            "Stromversorgung: " + ", ".join(_power_issue_names(_power_current_flags))
+                        )
                         health_status = "error"
                     warning_counters = {
                         "V4L2-Sequenzsprünge": int(getattr(streamer, "sequence_gaps", 0)),
@@ -732,6 +861,7 @@ def handle_commands():
                         "writer_queue_max_depth": int(getattr(streamer, "writer_queue_max_depth", 0)),
                         "writer_queue_drops": int(getattr(streamer, "writer_queue_drops", 0)),
                         "health_event_count": int(getattr(streamer, "health_event_count", 0)),
+                        "health_log_event_count": int(_health_log_event_count),
                         "health_log_drops": int(_health_log_drop_count),
                         "health_log_file": (
                             os.path.basename(current_health_log_filename)
@@ -749,6 +879,25 @@ def handle_commands():
                         "audio_available": audio_running,
                         "audio_exit_code": audio_exit_code,
                         "audio_error": audio_error_msg,
+                        "audio_progress_age_s": audio_progress_age,
+                        "audio_xruns": int(getattr(audio_proc, "xrun_count", 0)) if audio_proc else 0,
+                        "audio_recovery_restarts": int(
+                            getattr(audio_proc, "recovery_restart_count", 0)
+                        ) if audio_proc else 0,
+                        "audio_writer_queue_depth": int(
+                            getattr(audio_proc, "writer_queue_depth", 0)
+                        ) if audio_proc else 0,
+                        "audio_writer_queue_max_depth": int(
+                            getattr(audio_proc, "writer_queue_max_depth", 0)
+                        ) if audio_proc else 0,
+                        "power_current_flags": int(_power_current_flags),
+                        "power_undervoltage_now": bool(
+                            _power_current_flags & POWER_CURRENT_UNDERVOLTAGE
+                        ),
+                        "power_throttled_now": bool(
+                            _power_current_flags & POWER_CURRENT_THROTTLED
+                        ),
+                        "power_event_count": int(_power_event_count),
                         "video_file_bytes": video_file_bytes,
                         "width": streamer.width,
                         "height": streamer.height,
@@ -797,6 +946,12 @@ def main():
     audio_monitor_thread = threading.Thread(target=audio_monitor, daemon=True)
     audio_monitor_thread.start()
     logging.info("Audio-Monitor-Thread gestartet.")
+
+    power_monitor_thread = threading.Thread(
+        target=power_monitor, name="power-health-monitor", daemon=True
+    )
+    power_monitor_thread.start()
+    logging.info("Power-Monitor-Thread gestartet.")
 
     try:
         while True:

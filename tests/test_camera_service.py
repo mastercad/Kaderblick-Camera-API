@@ -126,6 +126,35 @@ class TestPreviewCallback:
         assert not cs._stream_active.is_set()
 
 
+class TestPowerHealth:
+    def setup_method(self):
+        zmq_mock, _, _, _ = _make_zmq_mock()
+        self.cs = _load_camera_service(zmq_mock, _make_streamer_mock())
+
+    def test_parses_vcgencmd_hex_value(self):
+        assert self.cs._parse_throttled_flags("throttled=0x50005\n") == 0x50005
+
+    def test_current_flag_names_ignore_historical_bits(self):
+        assert self.cs._power_issue_names(0x50005) == [
+            "Unterspannung",
+            "System gedrosselt",
+        ]
+
+    def test_power_monitor_logs_new_current_problem_once(self):
+        with patch.object(
+            self.cs, "_read_current_power_flags", side_effect=[1, KeyboardInterrupt]
+        ), patch.object(self.cs, "health_event_callback") as callback, patch.object(
+            self.cs._health_log_stop, "wait", return_value=False
+        ):
+            with pytest.raises(KeyboardInterrupt):
+                self.cs.power_monitor()
+
+        event = callback.call_args.args[0]
+        assert event["type"] == "power_throttling"
+        assert event["issues"] == ["Unterspannung"]
+        assert event["flags"] == 1
+
+
 # ===========================================================================
 # handle_commands – START
 # ===========================================================================
@@ -312,6 +341,30 @@ class TestHandleCommandsStatus:
         assert data["width"] == 1920
         assert data["height"] == 1080
         assert data["fps"] == 15
+
+    def test_status_reports_stalled_audio_as_error(self):
+        recorder = MagicMock()
+        recorder.poll.return_value = None
+        recorder.last_progress_monotonic = time.monotonic() - 3
+        recorder.xrun_count = 1
+        recorder.recovery_restart_count = 1
+        recorder.writer_queue_depth = 3
+        recorder.writer_queue_max_depth = 7
+        self.cs.audio_proc = recorder
+        self.rep.recv_string.side_effect = ["STATUS", KeyboardInterrupt]
+
+        with pytest.raises(KeyboardInterrupt):
+            self.cs.handle_commands()
+
+        data = json.loads(self.rep.send_string.call_args[0][0])
+        assert data["audio_available"] is False
+        assert data["audio_progress_age_s"] >= 3.0
+        assert data["audio_xruns"] == 1
+        assert data["audio_recovery_restarts"] == 1
+        assert data["audio_writer_queue_depth"] == 3
+        assert data["audio_writer_queue_max_depth"] == 7
+        assert data["health_status"] == "error"
+        assert any("ALSA liefert seit" in issue for issue in data["health_issues"])
 
 
 # ===========================================================================

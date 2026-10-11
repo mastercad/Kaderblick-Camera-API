@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 
 import psutil
 import zmq
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 import hardware
@@ -50,6 +50,49 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Kaderblick API", version="1.0", lifespan=lifespan)
 
+HEALTH_LOG_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "logs", "camera_health.jsonl"
+)
+HEALTH_LOG_BACKUPS = 5
+
+
+def _tail_lines(path: str, limit: int) -> list[str]:
+    if limit <= 0 or not os.path.isfile(path):
+        return []
+    with open(path, "rb") as source:
+        source.seek(0, os.SEEK_END)
+        position = source.tell()
+        chunks = []
+        line_count = 0
+        while position > 0 and line_count <= limit:
+            size = min(64 * 1024, position)
+            position -= size
+            source.seek(position)
+            chunk = source.read(size)
+            chunks.append(chunk)
+            line_count += chunk.count(b"\n")
+    return b"".join(reversed(chunks)).decode("utf-8", errors="replace").splitlines()[-limit:]
+
+
+def _read_recent_health_events(limit: int) -> list[dict]:
+    events: list[dict] = []
+    paths = [HEALTH_LOG_FILE] + [
+        f"{HEALTH_LOG_FILE}.{index}" for index in range(1, HEALTH_LOG_BACKUPS + 1)
+    ]
+    for path in paths:
+        remaining = limit - len(events)
+        if remaining <= 0:
+            break
+        for line in reversed(_tail_lines(path, remaining)):
+            try:
+                event = json.loads(line)
+                if isinstance(event, dict):
+                    events.append(event)
+            except json.JSONDecodeError:
+                continue
+    events.reverse()
+    return events
+
 
 # ==============================
 # Root
@@ -74,6 +117,7 @@ def root():
             "GET /stepper": "Get current stepper position",
             "GET /camera-position-status": "Get servo angle and stepper position",
             "GET /system/info": "System info (CPU, RAM, disk, output files)",
+            "GET /health/events": "Persisted camera/audio/power quality events",
             "POST /system/shutdown": "Shutdown the system",
             "POST /system/reboot": "Reboot the system",
             "GET /docs": "Interactive API documentation (Swagger UI)",
@@ -499,6 +543,7 @@ def get_status():
                     "writer_queue_max_depth": camera_status.get("writer_queue_max_depth"),
                     "writer_queue_drops": camera_status.get("writer_queue_drops"),
                     "health_event_count": camera_status.get("health_event_count"),
+                    "health_log_event_count": camera_status.get("health_log_event_count", 0),
                     "health_status": camera_status.get("health_status"),
                     "health_issues": camera_status.get("health_issues", []),
                     "health_log_file": camera_status.get("health_log_file"),
@@ -508,6 +553,21 @@ def get_status():
                     "capture_error": camera_status.get("capture_error"),
                     "audio_exit_code": camera_status.get("audio_exit_code"),
                     "audio_error": camera_status.get("audio_error"),
+                    "audio_progress_age_s": camera_status.get("audio_progress_age_s"),
+                    "audio_xruns": camera_status.get("audio_xruns", 0),
+                    "audio_recovery_restarts": camera_status.get(
+                        "audio_recovery_restarts", 0
+                    ),
+                    "audio_writer_queue_depth": camera_status.get(
+                        "audio_writer_queue_depth", 0
+                    ),
+                    "audio_writer_queue_max_depth": camera_status.get(
+                        "audio_writer_queue_max_depth", 0
+                    ),
+                    "power_current_flags": camera_status.get("power_current_flags", 0),
+                    "power_undervoltage_now": camera_status.get("power_undervoltage_now", False),
+                    "power_throttled_now": camera_status.get("power_throttled_now", False),
+                    "power_event_count": camera_status.get("power_event_count", 0),
                     "video_file_bytes": camera_status.get("video_file_bytes"),
                     "width": camera_status.get("width", 3840),
                     "height": camera_status.get("height", 2160),
@@ -557,6 +617,12 @@ def get_status():
     }
 
     return status
+
+
+@app.get("/health/events")
+def health_events(limit: int = Query(default=200, ge=1, le=500)):
+    events = _read_recent_health_events(limit)
+    return {"events": events, "count": len(events)}
 
 
 # ==============================

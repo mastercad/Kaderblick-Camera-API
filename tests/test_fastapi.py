@@ -514,6 +514,23 @@ class TestGetStatus:
         assert camera["invalid_mjpeg_frames"] == 2
         assert camera["v4l2_sequence_resets"] == 1
 
+    def test_forwards_audio_health_details(self):
+        _zmq_rep_returns(_make_status_json(
+            audio_progress_age_s=0.1,
+            audio_xruns=2,
+            audio_recovery_restarts=2,
+            audio_writer_queue_depth=3,
+            audio_writer_queue_max_depth=8,
+        ))
+
+        camera = client.get("/status").json()["camera_service"]
+
+        assert camera["audio_progress_age_s"] == 0.1
+        assert camera["audio_xruns"] == 2
+        assert camera["audio_recovery_restarts"] == 2
+        assert camera["audio_writer_queue_depth"] == 3
+        assert camera["audio_writer_queue_max_depth"] == 8
+
 
 # ===========================================================================
 # GET /system/info
@@ -562,6 +579,30 @@ class TestSystemInfo:
         with patch.object(fastapi_app.disk_space_error, "is_set", return_value=False):
             r = client.get("/system/info")
         assert "disk_space_error" not in r.json()
+
+
+class TestHealthEvents:
+    def test_returns_persisted_events_in_chronological_order(self, tmp_path):
+        log_path = tmp_path / "camera_health.jsonl"
+        log_path.write_text(
+            "not-json\n"
+            + json.dumps({"timestamp": "2026-10-11T10:00:00+02:00", "type": "audio_xrun"})
+            + "\n"
+            + json.dumps({"timestamp": "2026-10-11T10:01:00+02:00", "type": "v4l2_sequence_gap"})
+            + "\n",
+            encoding="utf-8",
+        )
+        with patch.object(fastapi_app, "HEALTH_LOG_FILE", str(log_path)):
+            response = client.get("/health/events?limit=20")
+
+        assert response.status_code == 200
+        assert [event["type"] for event in response.json()["events"]] == [
+            "audio_xrun",
+            "v4l2_sequence_gap",
+        ]
+
+    def test_rejects_excessive_limit(self):
+        assert client.get("/health/events?limit=501").status_code == 422
 
 
 # ===========================================================================
