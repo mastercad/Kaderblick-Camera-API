@@ -644,6 +644,12 @@ class TestCaptureLoopTimeoutLogic:
 
         assert s._normalize_mjpeg_frame(b"\xff\xd8incomplete") is None
 
+    def test_multiple_concatenated_mjpegs_are_rejected(self):
+        s = V4L2MJPGStreamer()
+        concatenated = b"\xff\xd8first\xff\xd9\xff\xd8second\xff\xd9"
+
+        assert s._normalize_mjpeg_frame(concatenated) is None
+
 
 class TestSequenceTracking:
     def test_forward_gap_counts_only_missing_frames(self):

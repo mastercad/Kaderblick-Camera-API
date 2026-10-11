@@ -491,6 +491,13 @@ class V4L2MJPGStreamer:
         """Liefert exakt ein vollstaendiges JPEG ohne UVC-Padding oder ``None``."""
         if len(frame) < 4 or frame[:2] != b'\xff\xd8':
             return None
+        # Ein zweiter SOI-Marker kann in einem korrekt byte-gestopften JPEG-
+        # Entropiestrom nicht vorkommen. Er belegt daher, dass der UVC-Treiber
+        # mindestens zwei Kamerabilder in einem V4L2-Puffer zusammengefasst
+        # hat. Das bisherige rfind(EOI) hätte einen solchen Puffer fälschlich
+        # als einzelnes gültiges Bild an Preview und Aufnahme weitergegeben.
+        if frame.find(b'\xff\xd8', 2) >= 0:
+            return None
         eoi = frame.rfind(b'\xff\xd9')
         if eoi < 2:
             return None

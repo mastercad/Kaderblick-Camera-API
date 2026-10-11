@@ -221,6 +221,109 @@ denen V4L2-Pufferdaten, Kernel-UVC-/USB-Status und Systemzustand mit derselben
 Zeitbasis erfasst werden. Kurze fehlerfreie Läufe widerlegen sporadische Fehler
 nicht.
 
+### Alternierende Wiederholungsreihe: Python-Capture gegen `v4l2-ctl`
+
+Am 11. Oktober folgte eine längere Reihe mit identischen Streamparametern und
+ohne laufenden Kameradienst: pro Kamera zehn Blöcke zu jeweils 120 Sekunden,
+abwechselnd fünf Blöcke mit der isolierten `V4L2MJPGStreamer`-Klasse und fünf
+Blöcke mit `v4l2-ctl`. Beide Leser verwendeten 3840x2160 MJPEG bei 30 fps und
+zwölf MMAP-Puffer. Die Reihenfolge war zwischen den beiden Kameras vertauscht.
+
+| Kamera | Leser | Läufe | UVC-Frames | Läufe mit UVC-Fehlern | Error-Payloads | ungültige Header |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | Python-Capture | 5 | 17.990 | 0 | 0 | 0 |
+| 1 | `v4l2-ctl` | 5 | 17.995 | 0 | 0 | 0 |
+| 2 | Python-Capture | 5 | 17.990 | 0 | 0 | 0 |
+| 2 | `v4l2-ctl` | 5 | 18.014 | 1 | 18 | 4 |
+
+Unmittelbar vor dieser Reihe hatte ein separater 120-Sekunden-Pilot mit der
+isolierten Python-Klasse auf Kamera 2 vier Kernel-Error-Payloads, drei
+ungültige UVC-Header, zwei V4L2-Sequenzsprünge, elf fehlende Sequenzen und ein
+ungültiges MJPEG ergeben; der gleichzeitige Python-Pilot auf Kamera 1 blieb
+sauber. Dieser Pilot gehört wegen der abweichenden Stellung in der
+Testreihenfolge nicht in die obige Summierung.
+
+Damit ist über getrennte Läufe belegt, dass sowohl der unabhängige Leser als
+auch die Python-Klasse von dem Fehler betroffen sein können. Der eigene
+Python-Capturepfad ist für das Auftreten folglich nicht erforderlich. Die
+Reihe belegt wegen der geringen Zahl sporadischer Ereignisse ausdrücklich
+keinen Unterschied der Fehlerrate zwischen den beiden Lesern und keinen
+Unterschied zwischen den physischen Kameras.
+
+### Alternierende Wiederholungsreihe: Wartezeit nach USB-Reset
+
+Weil zwei Dienststarts kurz nach dem obligatorischen `USBDEVFS_RESET`
+auffällige Bursts gezeigt hatten, wurde die Wartezeit nach dem Reset getrennt
+geprüft. Vor jedem Block wurde dasselbe Gerät mit `usbreset 04b4:0822`
+zurückgesetzt; anschließend wartete der Test abwechselnd 1 oder 10 Sekunden
+und las mit `v4l2-ctl` 1.800 Frames bei denselben 4K-MJPEG-/30-fps- und
+12-Puffer-Parametern. Pro Kamera liefen fünf Blöcke je Wartezeit, auf Kamera 2
+in umgekehrter Reihenfolge.
+
+| Wartezeit | Läufe | UVC-Frames | Error-Payloads | ungültige Header |
+| --- | ---: | ---: | ---: | ---: |
+| 1 Sekunde | 10 | 35.980 | 0 | 0 |
+| 10 Sekunden | 10 | 35.980 | 0 | 0 |
+
+Damit ist weder die einsekündige Wartezeit noch ein unmittelbar vorheriger
+USB-Reset als hinreichende Ursache der sporadischen Bursts belegt. Die zuvor
+zeitlich auffälligen Dienststarts dürfen nach dieser Gegenprobe nicht dem
+Reset zugerechnet werden.
+
+In einer weiteren Reihe wurde die bislang fehlende Kombination aus Reset und
+isolierter Python-Captureklasse fünfmal pro Kamera geprüft. Jeder Block lief
+90 Sekunden und verwendete wieder 4K-MJPEG bei 30 fps und zwölf Puffer:
+
+| Kamera | Läufe | UVC-Frames | Läufe mit UVC-Fehlern | Error-Payloads | ungültige Header |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 5 | 13.490 | 0 | 0 | 0 |
+| 2 | 5 | 13.514 | 1 | 30 | 1 |
+
+Im betroffenen Kamera-2-Block zählte die Anwendung fünf Sequenzsprünge, 24
+fehlende Sequenzen und vier ungültige MJPEG-Puffer. Die übrigen neun Blöcke
+waren unauffällig. Damit kann auch die Kombination `USBDEVFS_RESET` plus
+Python-Initialisierung betroffen sein; sie ist nach dieser Verteilung aber
+nicht als hinreichende Ursache belegt.
+
+### Vollständiges Dienstprogramm außerhalb von systemd
+
+Beide systemd-Units wurden auf Laufzeitbegrenzungen geprüft. Die Prozesse
+liefen mit normalem Scheduler, Nice 0, allen vier CPUs, ohne CPU- oder
+Speicherlimit und ohne Realtime-Priorität. Anschließend wurde das vollständige
+`camera_service.py` bei gestoppter Unit fünfmal pro Kamera manuell mit exakt
+derselben virtuellen Umgebung gestartet. Jeder Block lief 90 Sekunden:
+
+| Kamera | Läufe | UVC-Frames | Läufe mit UVC-Fehlern | Error-Payloads | ungültige Header |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 5 | 13.267 | 0 | 0 | 0 |
+| 2 | 5 | 13.318 | 1 | 27 | 1 |
+
+Der betroffene Kamera-2-Block erzeugte 33 Anwendungsdiagnosen. Weil der Fehler
+damit außerhalb der systemd-Unit auftrat, ist systemd keine notwendige
+Bedingung. Die Serie belegt wegen nur eines betroffenen Blocks keinen
+Häufigkeitsunterschied zum isolierten Captureprozess.
+
+### API-/Preview-Subscriber an und aus
+
+Der API-Prozess startet beim Import dauerhaft einen ZMQ-Subscriber. Gleichzeitig
+sendete `preview_callback_mjpg()` bisher unabhängig von `stream_active` bis zu
+drei vollständige 4K-JPEGs pro Sekunde. Um diesen realen Logikfehler von der
+UVC-Ursache zu trennen, liefen pro Kamera fünf neue Streams mit je einer
+60-Sekunden-Phase bei gestopptem und gestartetem API-Prozess; die Reihenfolge
+war zwischen den Kameras vertauscht.
+
+Über beide Kameras waren jeweils sieben Phasen pro Zustand unauffällig. Zwei
+API-an-Phasen enthielten zusammen 69 Error-Payloads und zehn ungültige Header;
+eine API-aus-Phase enthielt neun Error-Payloads und vier ungültige Header.
+Damit ist der Subscriber keine notwendige Bedingung der Bursts. Drei
+Burstphasen reichen nicht aus, um einen Häufigkeitsunterschied zwischen den
+Zuständen zu belegen.
+
+Unabhängig davon wurde der Logikfehler behoben: Bei
+`stream_active == false` kehrt der Preview-Callback nun vor Zeitmessung und
+ZMQ-Send sofort zurück. Das reduziert die unnötige Bildauslieferung, wird aber
+nicht als Behebung der UVC-Payloadfehler bewertet.
+
 ## Kernelinterne UVC-Paketstatistik
 
 Der laufende `uvcvideo`-Treiber stellt unter
@@ -366,4 +469,119 @@ USB-Bridge das UVC-Error-Bit und die ungültigen Header auslöst. Dafür kommen
 unter anderem Encoder-/Firmwarezustand und geräteinterne Pufferung als noch
 unbestätigte Hypothesen in Betracht. Sie dürfen ohne einen weiteren
 kontrollierten Test nicht als Ursache bezeichnet werden.
+
+## UVC-Aushandlung und Framegrenzen im USB-Datenstrom
+
+Am 11. Oktober wurden beim normalen Neuöffnen beider Streams die UVC-Probe-
+und Commit-Control-Transfers mit `usbmon` erfasst. Die von beiden Geräten
+bestätigten Commit-Daten waren bytegleich:
+
+- Formatindex 2, Frameindex 1;
+- Frameintervall 333.333 × 100 ns, also 30 fps;
+- `dwMaxVideoFrameSize = 8.294.400` Byte;
+- `dwMaxPayloadTransferSize = 16.384` Byte.
+
+Eine direkte, jeweils 0,2 Sekunden aktive `uvcvideo`-Frame-Trace meldete auf
+beiden Systemen ausschließlich reguläre Abschlüsse durch `EOF found` (Kamera 1:
+7, Kamera 2: 6). Damit ist belegt, dass der Treiber in diesen Zeitfenstern
+EOF-Markierungen verarbeitet hat.
+
+Eine zwischenzeitliche Auswertung der ersten Bytes jeder binär über `usbmon`
+kopierten URB schien dem zu widersprechen und zeigte auf Kamera 1 zahlreiche
+FID-Wechsel. Diese Interpretation ist verworfen: Sie reproduzierte nicht die
+gleichzeitig direkt im Treiber gemessenen Frameentscheidungen und darf nicht
+als Befund über FID oder EOF verwendet werden. Ebenso ist eine versuchsweise
+Gruppierung bis zur nächsten kurzen URB für den ausgehandelten Payloadwert von
+16.384 Byte nicht gültig. Maßgeblich bleiben die direkt im Treiber erfassten
+UVC-Zähler und Frameentscheidungen.
+
+## Trennung der beobachteten Fehlerklassen
+
+Die gleichzeitigen Messfenster zeigen mindestens zwei getrennt zu behandelnde
+Klassen:
+
+1. `uvcvideo` zählt vom Gerät gelieferte Payload-Header mit gesetztem
+   `UVC_STREAM_ERR` beziehungsweise formal ungültige Header. Diese Zähler
+   stiegen wiederholt trotz ausschließlich erfolgreicher USB-Bulk-Abschlüsse.
+2. Anwendungsseitige ungültige MJPEG-Puffer und Sequenzsprünge stimmen nicht in
+   jedem Zeitfenster eins zu eins mit diesen beiden Kernelzählern überein. Sie
+   dürfen daher nicht pauschal als dasselbe Ereignis gezählt oder erklärt
+   werden.
+
+Der Linux-USB-Core prüft SuperSpeed-Übertragungen einschließlich der
+Link-/Protokollsicherung, meldete in den wiederholten Messfenstern aber keinen
+fehlgeschlagenen URB. Belegt ist daher, dass die von `uvcvideo` gezählten
+Error-Bits in erfolgreich abgeschlossenen USB-Daten ankamen. Nicht belegt ist,
+welcher interne Kamera-/Bridge-Zustand diese Kennzeichnung auslöst oder ob eine
+hostseitige Initialisierungsfolge ihn begünstigt.
+
+## Hersteller-Extension-Unit und interner Logpuffer
+
+Beide Kameras melden dieselbe UVC-Extension-Unit mit der GUID
+`acb6890c-a3b3-4060-8b9a-df34eef39a2e` und elf herstellerspezifischen
+Controls. Sämtliche Prüfungen erfolgten nur lesend über `UVCIOC_CTRL_QUERY`;
+es wurden keine unbekannten Herstellerwerte geschrieben.
+
+Control 6 enthält einen 1.024-Byte-Textpuffer mit wiederholten Meldungen wie
+`SensorWrite1632 ret: 0`, `SensorWrite1632 ret: 68` und `No Error: 18`.
+Während der zeitgleichen Messung stiegen die UVC-Error-Payloads auf Kamera 1
+in einem Burst um 30 und auf Kamera 2 in getrennten Bursts um 27 sowie später
+25 und 32. Header, Hash und Textzähler des jeweiligen Herstellerpuffers
+blieben bei jedem Messpunkt bytegenau unverändert. Die Texte sind daher alter
+Pufferinhalt und kein Live-Indikator der beobachteten UVC-Bursts. Ihre
+herstellerspezifische Bedeutung ist nicht dokumentiert und darf nicht als
+Fehlercode interpretiert werden.
+
+Der 6.144-Byte-Inhalt von Control 4 war bei beiden Kameras identisch und über
+wiederholte Lesevorgänge unverändert. Die übrigen lesbaren Controls waren
+ebenfalls auf beiden Geräten identisch; Control 11 beantwortete `GET_CUR`
+nicht innerhalb des Gerätetimeouts. Es gibt in diesen Controls damit keinen
+beobachteten veränderlichen Status, der die Fehlerbursts erklärt.
+
+## Unterschiedliche Systembasis
+
+Die beiden Pis sind nicht vollständig gleich installiert:
+
+- Kamera 1 läuft auf Debian 13 (Trixie).
+- Kamera 2 läuft auf Debian 12 (Bookworm).
+- Beide melden zwar `6.12.75+rpt-rpi-2712`, Kernel-Image, Kernelkonfiguration
+  und `uvcvideo`-Modul sind jedoch binär verschieden. Auf Kamera 2 kennt die
+  Paketverwaltung nur ein älteres Kernelpaket; der laufende Kernel wurde damit
+  nicht vollständig aus dem dort registrierten Paketbestand installiert.
+
+Das ist eine reale, zu bereinigende Systemabweichung, aber kein belegter
+Ursachenbeweis: Die UVC-Error-Payloads treten auf beiden unterschiedlichen
+Kernelbuilds auf. Eine Angleichung ist für einen sauberen Kreuztest notwendig,
+darf jedoch nicht vorab als Fehlerbehebung bewertet werden.
+
+## Validierung zusammengeklebter MJPEG-Bilder
+
+Die bisherige `_normalize_mjpeg_frame()`-Validierung prüfte nur SOI am Anfang
+und das letzte EOI im Puffer. Ein Puffer mit zwei vollständigen, aneinander
+gehängten JPEGs konnte dadurch als ein gültiges Bild gelten. Die Validierung
+weist nun einen weiteren SOI-Marker nach dem ersten als ungültiges MJPEG zurück,
+sodass ein solcher V4L2-Puffer den vorhandenen Qualitätszähler erhöht und nicht
+in Preview oder Aufnahme gelangt. Diese Änderung verbessert Erkennung und
+Schadensbegrenzung; sie behebt keine bereits vor V4L2 entstandenen
+UVC-Payloadfehler.
+
+### Laufzeitkontrolle der erweiterten Validierung
+
+Nach der Änderung wurden beide Capture-Dienste ohne laufende Aufnahme neu
+gestartet und zwei Minuten lang in vier 30-Sekunden-Stichproben geprüft:
+
+| Kamera | empfangene V4L2-Puffer | Sequenzlücken | fehlende Frames | ungültige MJPEGs | UVC-Error-Payloads | ungültige UVC-Header |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 3.794 | 0 | 0 | 0 | 0 | 0 |
+| 2 | 3.804 | 8 | 38 | 12 | 35 | 2 |
+
+Die zwölf ungültigen Puffer auf Kamera 2 waren keine durch die neuen
+Mehrfach-SOI-Prüfung entdeckten normalen Bilder: Elf begannen nicht mit SOI,
+zehn davon enthielten auch kein EOI; ein 425.542-Byte-Puffer begann mit SOI,
+endete aber ohne EOI. Die übrigen fehlerhaften Puffer waren überwiegend nur
+etwa 16 KiB groß. Im selben Zeitraum meldete das Kerneljournal weder `-71`
+noch einen xHCI-Fehler. Kamera 1 zeigte mit derselben Codeversion keinen
+Fehler. Damit hat die strengere Validierung in diesem Kontrollfenster keine
+regulären Kamera-1-Frames fälschlich verworfen, während der bereits unterhalb
+der Anwendung beginnende Burst auf Kamera 2 unmittelbar reproduziert wurde.
 

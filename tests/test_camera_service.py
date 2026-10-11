@@ -97,8 +97,19 @@ class TestPreviewCallback:
         cs = _load_camera_service(zmq_mock, streamer)
 
         frame = b"\xff\xd8\xff" + b"\x00" * 50
+        cs._start_raw_stream()
         cs.preview_callback_mjpg(frame)
         pub.send.assert_called_once_with(frame, zmq_mock.NOBLOCK)
+
+    def test_does_not_send_while_stream_is_inactive(self):
+        zmq_mock, rep, pub, ctx = _make_zmq_mock()
+        streamer = _make_streamer_mock()
+        cs = _load_camera_service(zmq_mock, streamer)
+
+        cs._stop_raw_stream()
+        cs.preview_callback_mjpg(b"\xff\xd8\xff")
+
+        pub.send.assert_not_called()
 
     def test_ignores_zmq_exception(self):
         zmq_mock, rep, pub, ctx = _make_zmq_mock()
@@ -106,6 +117,7 @@ class TestPreviewCallback:
         cs = _load_camera_service(zmq_mock, streamer)
 
         pub.send.side_effect = Exception("zmq full")
+        cs._start_raw_stream()
         # darf keinen Absturz verursachen
         cs.preview_callback_mjpg(b"\xff\xd8\xff")
 

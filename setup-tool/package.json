@@ -1,6 +1,6 @@
 {
   "name": "kaderblick-camera-setup",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Schreibt und konfiguriert einen einsatzfertigen Kaderblick-Kamera-Datenträger.",
   "main": "src/main.js",
   "author": "Kaderblick",
