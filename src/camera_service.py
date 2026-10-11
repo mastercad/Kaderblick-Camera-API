@@ -60,6 +60,7 @@ _health_event_queue = queue.Queue(maxsize=10_000)
 _health_log_stop = threading.Event()
 _health_log_drop_count = 0
 _health_log_event_count = 0
+_recording_health_event_count = 0
 current_health_log_filename = None
 GLOBAL_HEALTH_LOG_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "logs", "camera_health.jsonl"
@@ -99,7 +100,7 @@ def _append_health_event(path, event):
 
 def health_event_callback(event):
     """Queue-only Callback; blockiert weder V4L2-Capture noch den Writer."""
-    global _health_log_drop_count, _health_log_event_count
+    global _health_log_drop_count, _health_log_event_count, _recording_health_event_count
     queued_event = dict(event)
     recording_log = current_health_log_filename
     if recording_log:
@@ -107,6 +108,8 @@ def health_event_callback(event):
     try:
         _health_event_queue.put_nowait((queued_event, recording_log))
         _health_log_event_count += 1
+        if recording_log:
+            _recording_health_event_count += 1
     except queue.Full:
         _health_log_drop_count += 1
         if _health_log_drop_count == 1 or _health_log_drop_count % 100 == 0:
@@ -560,7 +563,7 @@ def audio_monitor():
 
 def handle_commands():
     global audio_proc, audio_error_msg, current_video_filename, current_audio_filename, current_meta_filename
-    global current_health_log_filename
+    global current_health_log_filename, _recording_health_event_count
     while True:
         try:
             msg = rep_socket.recv_string()
@@ -619,6 +622,7 @@ def handle_commands():
                         current_video_filename = video_filename
                         current_audio_filename = audio_filename
                         current_meta_filename = meta_filename
+                        _recording_health_event_count = 0
                         current_health_log_filename = health_log_filename
                         audio_error_msg = None
 
@@ -874,6 +878,7 @@ def handle_commands():
                         "writer_queue_drops": int(getattr(streamer, "writer_queue_drops", 0)),
                         "health_event_count": int(getattr(streamer, "health_event_count", 0)),
                         "health_log_event_count": int(_health_log_event_count),
+                        "recording_health_event_count": int(_recording_health_event_count),
                         "health_log_drops": int(_health_log_drop_count),
                         "health_log_file": (
                             os.path.basename(current_health_log_filename)

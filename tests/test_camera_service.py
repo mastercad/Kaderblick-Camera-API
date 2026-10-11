@@ -155,6 +155,29 @@ class TestPowerHealth:
         assert event["flags"] == 1
 
 
+class TestRecordingHealthEvents:
+    def setup_method(self):
+        zmq_mock, _, _, _ = _make_zmq_mock()
+        self.cs = _load_camera_service(zmq_mock, _make_streamer_mock())
+
+    def test_recording_event_counter_only_counts_events_with_active_recording_log(self):
+        self.cs._recording_health_event_count = 0
+        self.cs.current_health_log_filename = None
+        self.cs.health_event_callback({"type": "preview_problem", "recording": False})
+        assert self.cs._recording_health_event_count == 0
+        self.cs._health_event_queue.get_nowait()
+        self.cs._health_event_queue.task_done()
+
+        self.cs.current_health_log_filename = "/tmp/aufnahme_test_health.jsonl"
+        self.cs.health_event_callback({"type": "recording_problem", "recording": True})
+
+        assert self.cs._recording_health_event_count == 1
+        queued_event, recording_log = self.cs._health_event_queue.get_nowait()
+        assert queued_event["recording_health_log"] == "aufnahme_test_health.jsonl"
+        assert recording_log == "/tmp/aufnahme_test_health.jsonl"
+        self.cs._health_event_queue.task_done()
+
+
 # ===========================================================================
 # handle_commands – START
 # ===========================================================================

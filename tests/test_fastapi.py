@@ -565,6 +565,7 @@ class TestSystemInfo:
         _zmq_rep_returns(_make_status_json(
             health_status="warning",
             health_event_count=3,
+            recording_health_event_count=2,
             v4l2_sequence_frames_lost=7,
         ))
 
@@ -572,6 +573,7 @@ class TestSystemInfo:
 
         assert health["health_status"] == "warning"
         assert health["health_event_count"] == 3
+        assert health["recording_health_event_count"] == 2
         assert health["v4l2_sequence_frames_lost"] == 7
 
     def test_disk_space_error_shown_when_set(self):
@@ -607,6 +609,32 @@ class TestHealthEvents:
 
     def test_rejects_excessive_limit(self):
         assert client.get("/health/events?limit=501").status_code == 422
+
+    def test_returns_only_requested_recording_log(self, tmp_path):
+        recordings_dir = tmp_path / "recordings"
+        recordings_dir.mkdir()
+        log_path = recordings_dir / "aufnahme_2026-10-11_12-00-00_health.jsonl"
+        log_path.write_text(
+            json.dumps({"type": "v4l2_sequence_gap", "recording": True}) + "\n",
+            encoding="utf-8",
+        )
+        fake_source = tmp_path / "src" / "fastapi_app.py"
+        fake_source.parent.mkdir()
+        with patch.object(fastapi_app, "__file__", str(fake_source)):
+            response = client.get(
+                "/health/events?limit=20&recording_log=aufnahme_2026-10-11_12-00-00_health.jsonl"
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "events": [{"type": "v4l2_sequence_gap", "recording": True}],
+            "count": 1,
+        }
+
+    def test_rejects_recording_log_path_traversal(self):
+        response = client.get("/health/events?recording_log=../camera_health.jsonl")
+
+        assert response.status_code == 400
 
 
 # ===========================================================================

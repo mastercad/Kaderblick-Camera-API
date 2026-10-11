@@ -94,6 +94,18 @@ def _read_recent_health_events(limit: int) -> list[dict]:
     return events
 
 
+def _read_health_events_file(path: str, limit: int) -> list[dict]:
+    events: list[dict] = []
+    for line in _tail_lines(path, limit):
+        try:
+            event = json.loads(line)
+            if isinstance(event, dict):
+                events.append(event)
+        except json.JSONDecodeError:
+            continue
+    return events
+
+
 # ==============================
 # Root
 # ==============================
@@ -550,6 +562,9 @@ def get_status():
                     "writer_queue_drops": camera_status.get("writer_queue_drops"),
                     "health_event_count": camera_status.get("health_event_count"),
                     "health_log_event_count": camera_status.get("health_log_event_count", 0),
+                    "recording_health_event_count": camera_status.get(
+                        "recording_health_event_count", 0
+                    ),
                     "health_status": camera_status.get("health_status"),
                     "health_issues": camera_status.get("health_issues", []),
                     "health_log_file": camera_status.get("health_log_file"),
@@ -626,8 +641,22 @@ def get_status():
 
 
 @app.get("/health/events")
-def health_events(limit: int = Query(default=200, ge=1, le=500)):
-    events = _read_recent_health_events(limit)
+def health_events(
+    limit: int = Query(default=200, ge=1, le=500),
+    recording_log: str | None = Query(default=None),
+):
+    if recording_log is not None:
+        if (
+            os.path.basename(recording_log) != recording_log
+            or not recording_log.endswith("_health.jsonl")
+        ):
+            raise HTTPException(status_code=400, detail="Ungültiger Aufnahme-Logname")
+        recording_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "recordings", recording_log
+        )
+        events = _read_health_events_file(recording_path, limit)
+    else:
+        events = _read_recent_health_events(limit)
     return {"events": events, "count": len(events)}
 
 
