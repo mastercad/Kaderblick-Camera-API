@@ -39,8 +39,15 @@ echo ""
 echo "[1/9] System-Pakete installieren..."
 $SSH "sudo systemctl stop packagekit 2>/dev/null || true && sudo apt-get update -q && sudo apt-get install -y \
     portaudio19-dev python3-pyaudio ffmpeg \
-    python3-rpi-lgpio swig liblgpio-dev \
+    python3-rpi-lgpio swig liblgpio-dev fake-hwclock systemd-timesyncd util-linux-extra \
     samba"
+
+echo "    Systemzeit abgleichen und Hardware-Uhr initialisieren..."
+$SSH "timestamp=\$(python3 -c 'import email.utils,http.client; connection=http.client.HTTPConnection(\"deb.debian.org\",80,timeout=15); connection.request(\"HEAD\",\"/debian/\"); response=connection.getresponse(); value=response.getheader(\"Date\"); connection.close(); assert value; print(int(email.utils.parsedate_to_datetime(value).timestamp()))') && \
+    sudo timedatectl set-timezone Europe/Berlin && \
+    sudo date --utc --set \"@\${timestamp}\" && \
+    sudo hwclock --systohc --utc && \
+    sudo fake-hwclock save"
 
 # ── 2. Code deployen ─────────────────────────────────────────
 echo "[2/9] Code deployen..."
@@ -57,10 +64,16 @@ $SSH "cd /home/${SSH_USER}/camera_api && \
 
 # ── 4. Systemd-Services ──────────────────────────────────────
 echo "[4/9] Systemd-Services einrichten..."
-$SSH "sudo cp /home/${SSH_USER}/camera_api/systemd/camera_service.service  /etc/systemd/system/ && \
+$SSH "if grep -qE '^[[:space:]]*dtparam=rtc_bbat_vchg=' /boot/firmware/config.txt; then \
+        sudo sed -i -E 's/^[[:space:]]*dtparam=rtc_bbat_vchg=.*/dtparam=rtc_bbat_vchg=3000000/' /boot/firmware/config.txt; \
+      else \
+        printf '\n%s\n' 'dtparam=rtc_bbat_vchg=3000000' | sudo tee -a /boot/firmware/config.txt >/dev/null; \
+      fi && \
+      sudo cp /home/${SSH_USER}/camera_api/systemd/camera_service.service  /etc/systemd/system/ && \
       sudo cp /home/${SSH_USER}/camera_api/systemd/kaderblick_app.service   /etc/systemd/system/ && \
       sudo systemctl daemon-reload && \
-      sudo systemctl enable camera_service kaderblick_app && \
+      sudo systemctl enable systemd-timesyncd camera_service kaderblick_app && \
+      sudo systemctl start systemd-timesyncd && \
       sudo systemctl restart camera_service kaderblick_app"
 
 # ── 5. Hostname setzen ───────────────────────────────────────
@@ -134,6 +147,7 @@ echo "=== Verifikation unter ${STATIC_IP} ==="
 
 if $SSH_NEW "echo '-- IP:' && ip addr show eth0 | grep 'inet ' && \
              echo '-- Hostname:' && hostname && \
+             echo '-- RTC-Ladespannung:' && grep -x 'dtparam=rtc_bbat_vchg=3000000' /boot/firmware/config.txt && \
              echo '-- Services:' && sudo systemctl is-active camera_service kaderblick_app"; then
     echo ""
     echo "================================================================"

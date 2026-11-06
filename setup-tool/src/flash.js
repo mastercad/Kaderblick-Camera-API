@@ -56,7 +56,7 @@ async function configureRootPartition(disk) {
 function prepareConfig(contents) {
   const marker = "# Kaderblick Camera API";
   const original = String(contents).split(marker, 1)[0].trimEnd();
-  return `${original}\n\n${marker}\ndtoverlay=disable-wifi\ndtoverlay=disable-bt\nusb_max_current_enable=1\n`;
+  return `${original}\n\n${marker}\ndtoverlay=disable-wifi\ndtoverlay=disable-bt\nusb_max_current_enable=1\ndtparam=rtc_bbat_vchg=3000000\n`;
 }
 
 async function configureBootPartition(disk, configuration, runtimePath, installScriptPath) {

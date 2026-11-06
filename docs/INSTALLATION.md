@@ -9,6 +9,7 @@ Die produktiven Raspberry Pi 5 werden mit dem **Kaderblick Kamera Setup** vorber
 ## Voraussetzungen
 
 - Raspberry Pi 5
+- offizielle Raspberry Pi RTC Battery (`SC1163`, wiederaufladbare ML2020), wenn die Uhr ohne Internet und bei getrennter Stromversorgung korrekt weiterlaufen soll
 - externe USB-3-Festplatte/SSD oder alternativ eine SD-Karte
 - Arducam B0589 (`04b4:0822`)
 - ausreichend dimensioniertes Netzteil; bei gleichzeitig angeschlossener USB-Kamera und USB-Festplatte ist die stabile Stromversorgung besonders wichtig
@@ -44,9 +45,9 @@ Benutzer und Passwort sind standardmäßig jeweils `kaderblick`. Das Konto wird 
 3. Kamera, Audio-Hardware, Ethernet und Motorsteuerung anschließen.
 4. Raspberry Pi einschalten.
 
-Raspberry Pi 5 unterstützt USB-Massenspeicher als Bootmedium. Das Tool setzt `usb_max_current_enable=1`. Vor dem einmaligen Init ist die gewählte statische Kamera-IP bereits aktiv; der Internetzugang wird vorübergehend um eine DHCP-Route ergänzt, damit Camera API, USB-/Audio-Werkzeuge, SSH und SMB installiert werden können. Nach erfolgreicher Einrichtung schreibt das Init die endgültige statische Netzwerkkonfiguration mit dem gewählten Gateway, entfernt seinen eigenen Boot-Eintrag und startet genau einmal neu. Bei späteren Starts werden weder Init noch Updates erneut ausgeführt. Danach benötigt die Kamera kein Internet mehr.
+Raspberry Pi 5 unterstützt USB-Massenspeicher als Bootmedium. Das Tool setzt `usb_max_current_enable=1` und aktiviert mit `dtparam=rtc_bbat_vchg=3000000` die 3,0-V-Ladung der offiziellen ML2020-RTC-Batterie. Es installiert außerdem das in Debian 13 separat ausgelieferte RTC-Werkzeug `hwclock` und schreibt die verifizierte Internetzeit bei der Ersteinrichtung in die Hardware-Uhr. Vor dem einmaligen Init ist die gewählte statische Kamera-IP bereits aktiv; der Internetzugang wird vorübergehend um eine DHCP-Route ergänzt, damit Camera API, USB-/Audio-Werkzeuge, SSH und SMB installiert werden können. Nach erfolgreicher Einrichtung schreibt das Init die endgültige statische Netzwerkkonfiguration mit dem gewählten Gateway, entfernt seinen eigenen Boot-Eintrag und startet genau einmal neu. Bei späteren Starts werden weder Init noch Updates erneut ausgeführt. Kamera und API funktionieren ohne Internet; eine erreichbare Internetverbindung wird nur für den automatischen NTP-Zeitabgleich genutzt.
 
-Bei jedem späteren Boot wird die durch `fake-hwclock` fortgeschriebene Uhrzeit geladen. Ist in diesem Moment Internet erreichbar, gleicht ein auf 15 Sekunden begrenzter Einmaldienst die Uhr ab. Dieser Dienst läuft zwingend vor den Kamera-Diensten und endet anschließend. Ohne Internet wird der Abgleich übersprungen. Es existieren weder ein Zeitabgleich-Timer noch ein späterer Wiederholungsversuch während des Aufnahmebetriebs. TRIM läuft ebenfalls nur in diesem Boot-Schritt. Automatische APT-, TRIM-, Logrotate-, Man-DB-, Dateisystemprüfungs- und temporäre Aufräumtimer sind deaktiviert; `cron` wird nicht gestartet.
+Bei jedem späteren Boot übernimmt der Kernel die Zeit aus der Pi-5-Hardware-Uhr. `fake-hwclock` hält zusätzlich einen Offline-Rückfall vor und setzt die Systemzeit nur dann, wenn dessen gespeicherter Wert neuer ist. Ist beim Boot Internet erreichbar, gleicht ein auf 15 Sekunden begrenzter Einmaldienst die Uhr ab und schreibt das Ergebnis sofort in die echte RTC und den Rückfall. Unabhängig davon bleibt `systemd-timesyncd` aktiv: Ist zunächst kein NTP-Server erreichbar, versucht der Dienst den Abgleich später erneut. Nach erfolgreicher Synchronisierung hält der Kernel die Hardware-Uhr im ungefähr elfminütigen Rhythmus aktuell. Die Kamera-Dienste warten nicht auf NTP und laufen daher auch vollständig offline. TRIM läuft nur im Boot-Schritt. Automatische APT-, TRIM-, Logrotate-, Man-DB-, Dateisystemprüfungs- und temporäre Aufräumtimer sind deaktiviert; `cron` wird nicht gestartet.
 
 Der Boot-Schritt begrenzt außerdem die maximale CPU-Frequenz auf 1,5 GHz. Auf
 beiden produktiven Pis erzeugte ein Vierkern-Lasttest bei 2,4 GHz reproduzierbar
@@ -162,9 +163,9 @@ network:
   Dual-Mono-Ausgabe
 - OpenSSH
 - Samba-Freigabe `recordings`
-- Offline-Zeitfortschreibung mit `fake-hwclock`
+- batteriegepufferte Pi-5-RTC, automatischer NTP-Abgleich und Offline-Rückfall mit `fake-hwclock`
 - begrenztes persistentes Journal
-- einmaliger Zeitabgleich und TRIM ausschließlich beim Boot vor dem Start der Kamera-Dienste
+- schneller Zeitabgleich und TRIM beim Boot; spätere NTP-Wiederholungen blockieren die Kamera-Dienste nicht
 
 Die Aufnahmen liegen unter `/srv/kaderblick/recordings` und werden durch den Share `recordings` bereitgestellt.
 

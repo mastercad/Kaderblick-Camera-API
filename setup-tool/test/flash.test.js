@@ -14,13 +14,46 @@ test("adds the one-time installer to the official boot command line", () => {
   assert.match(result, /systemd\.run_failure_action=none/);
 });
 
-test("applies radio and USB settings exactly once", () => {
+test("applies radio, USB and RTC battery settings exactly once", () => {
   const once = prepareConfig("arm_64bit=1\n");
   const twice = prepareConfig(once);
   assert.equal(twice, once);
   assert.match(once, /dtoverlay=disable-wifi/);
   assert.match(once, /dtoverlay=disable-bt/);
   assert.match(once, /usb_max_current_enable=1/);
+  assert.match(once, /dtparam=rtc_bbat_vchg=3000000/);
+});
+
+test("legacy setup installs the offline clock fallback and enables RTC battery charging", () => {
+  const setupScript = fs.readFileSync(path.join(
+    __dirname,
+    "..", "..", "scripts", "setup_camera.sh"
+  ), "utf8");
+
+  assert.match(setupScript, /python3-rpi-lgpio swig liblgpio-dev fake-hwclock systemd-timesyncd util-linux-extra/);
+  assert.match(setupScript, /dtparam=rtc_bbat_vchg=3000000/);
+  assert.match(setupScript, /hwclock --systohc --utc/);
+  assert.match(setupScript, /fake-hwclock save/);
+  assert.match(setupScript, /timedatectl set-timezone Europe\/Berlin/);
+  assert.match(setupScript, /systemctl enable systemd-timesyncd camera_service kaderblick_app/);
+});
+
+test("installs the RTC tool and persists trusted time in the hardware clock", () => {
+  const files = path.join(
+    __dirname,
+    "..", "..", "image-builder", "stage-kaderblick", "00-runtime", "files"
+  );
+  const installer = fs.readFileSync(path.join(files, "install-runtime.sh"), "utf8");
+  const preflight = fs.readFileSync(path.join(files, "kaderblick-boot-preflight"), "utf8");
+  const packageAt = installer.indexOf("util-linux-extra");
+  const hardwareClockAt = installer.indexOf("hwclock --systohc --utc");
+  const fallbackClockAt = installer.indexOf("fake-hwclock save");
+
+  assert.ok(packageAt >= 0);
+  assert.ok(hardwareClockAt > packageAt);
+  assert.ok(fallbackClockAt > hardwareClockAt);
+  assert.match(preflight, /hwclock --systohc --utc/);
+  assert.match(preflight, /fake-hwclock save/);
 });
 
 test("removes every one-time boot parameter only after successful configuration", () => {
@@ -78,9 +111,11 @@ test("uses the proven Netplan and NetworkManager final configuration", () => {
   assert.match(firstboot, /dhcp4: false/);
   assert.match(firstboot, /netplan", "generate/);
   assert.match(firstboot, /connection", "delete", "kaderblick-setup/);
+  assert.match(firstboot, /usr\/share\/zoneinfo\/Europe\/Berlin/);
+  assert.match(firstboot, /Europe\/Berlin\\n/);
 });
 
-test("runs time synchronization only before camera services and disables maintenance timers", () => {
+test("keeps network time synchronization active without delaying camera services", () => {
   const files = path.join(
     __dirname,
     "..", "..", "image-builder", "stage-kaderblick", "00-runtime", "files"
@@ -106,7 +141,11 @@ test("runs time synchronization only before camera services and disables mainten
   assert.match(installer, /cron\.service/);
   assert.match(installer, /fstrim\.timer/);
   assert.match(installer, /e2scrub_reap\.service/);
-  assert.match(installer, /systemd-timesyncd\.service/);
+  assert.match(installer, /samba samba-common-bin sudo systemd-timesyncd usbutils util-linux-extra/);
+  assert.match(installer, /systemctl enable NetworkManager\.service ssh\.service smbd\.service systemd-timesyncd\.service/);
+  assert.match(installer, /apt-mark manual fake-hwclock network-manager netplan\.io systemd-timesyncd util-linux-extra/);
+  assert.doesNotMatch(installer, /systemctl disable systemd-timesyncd\.service/);
+  assert.doesNotMatch(installer, /raspi-config systemd-timesyncd triggerhappy/);
   assert.match(apiService, /--no-access-log/);
 });
 

@@ -23,7 +23,7 @@ done
 for _ in $(seq 1 5); do
   if ip -4 route show default | grep -q '^default ' \
     && getent ahostsv4 deb.debian.org >/dev/null 2>&1; then
-    python3 <<'PY' && fake-hwclock save 2>/dev/null || true
+    if python3 <<'PY'
 import email.utils
 import http.client
 import subprocess
@@ -38,6 +38,14 @@ if not date_header:
 timestamp = int(email.utils.parsedate_to_datetime(date_header).timestamp())
 subprocess.run(("date", "--utc", "--set", f"@{timestamp}"), check=True)
 PY
+    then
+      if ! hwclock --systohc --utc; then
+        echo "Konnte synchronisierte Zeit nicht in die RTC schreiben" >&2
+      fi
+      if ! fake-hwclock save; then
+        echo "Konnte synchronisierte Zeit nicht als Offline-Rueckfall speichern" >&2
+      fi
+    fi
     break
   fi
   sleep 1

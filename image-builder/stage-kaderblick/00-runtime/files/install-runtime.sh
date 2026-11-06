@@ -139,7 +139,13 @@ apt-get -o Acquire::Retries=3 update
 apt-get -o Acquire::Retries=3 --no-install-recommends install -y \
   alsa-utils ca-certificates fake-hwclock openssh-server python3 \
   netplan.io python3-pip python3-psutil python3-rpi-lgpio python3-venv python3-zmq \
-  samba samba-common-bin sudo usbutils v4l-utils
+  samba samba-common-bin sudo systemd-timesyncd usbutils util-linux-extra v4l-utils
+
+# Die zuvor verifizierte Internetzeit einmalig in die echte Pi-5-RTC schreiben.
+# fake-hwclock bleibt als Rueckfall erhalten, falls spaeter keine RTC-Batterie
+# angeschlossen ist oder die Hardware-Uhr nicht gelesen werden kann.
+hwclock --systohc --utc
+fake-hwclock save
 
 install -d -m 0755 /opt/kaderblick/camera_api/src /opt/kaderblick/camera_api/config
 install -d -m 0775 /srv/kaderblick/recordings
@@ -170,9 +176,9 @@ done
 passwd --lock root
 
 systemctl disable systemd-networkd.service systemd-networkd-wait-online.service 2>/dev/null || true
-systemctl enable NetworkManager.service ssh.service smbd.service \
+systemctl enable NetworkManager.service ssh.service smbd.service systemd-timesyncd.service \
   kaderblick-boot-preflight.service camera_service.service kaderblick_app.service
-apt-mark manual network-manager netplan.io >/dev/null
+apt-mark manual fake-hwclock network-manager netplan.io systemd-timesyncd util-linux-extra >/dev/null
 systemctl disable cron.service fstrim.timer logrotate.timer man-db.timer \
   dpkg-db-backup.timer e2scrub_all.timer e2scrub_reap.service \
   systemd-tmpfiles-clean.timer 2>/dev/null || true
@@ -181,7 +187,7 @@ systemctl mask apt-daily.service apt-daily-upgrade.service \
   man-db.timer dpkg-db-backup.timer e2scrub_all.timer e2scrub_reap.service \
   rpi-eeprom-update.service rpi-eeprom-update.timer \
   systemd-tmpfiles-clean.timer 2>/dev/null || true
-systemctl disable systemd-timesyncd.service nmbd.service samba-ad-dc.service triggerhappy.service triggerhappy.socket 2>/dev/null || true
+systemctl disable nmbd.service samba-ad-dc.service triggerhappy.service triggerhappy.socket 2>/dev/null || true
 systemctl disable rpi-eeprom-update.service rpi-display-backlight.service sshswitch.service hciuart.service \
   regenerate_ssh_host_keys.service userconfig.service NetworkManager-wait-online.service 2>/dev/null || true
 
@@ -191,7 +197,7 @@ systemctl disable rpi-eeprom-update.service rpi-display-backlight.service sshswi
 # Kamera. Die Venv ist zu diesem Zeitpunkt vollständig erstellt.
 apt-get purge -y \
   avahi-daemon bluez modemmanager pi-bluetooth \
-  python3-pip python3-venv raspi-config systemd-timesyncd triggerhappy \
+  python3-pip python3-venv raspi-config triggerhappy \
   wpasupplicant 2>/dev/null || true
 apt-get -o APT::AutoRemove::RecommendsImportant=false autoremove --purge -y || true
 
